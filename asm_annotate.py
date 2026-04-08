@@ -153,8 +153,6 @@ def render_annotated(
                         short = os.path.join("…", *parts[-3:])
                     console.print(f"  [dim italic]{short}[/][dim]:{src_line_no}[/]")
                     prev_src_file = src_file
-                else:
-                    console.print(f"  [dim]:{src_line_no}[/]")
 
                 line_text = Text()
                 line_text.append("  ", style="dim")
