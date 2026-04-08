@@ -4,6 +4,7 @@
 # dependencies = [
 #   "rich",
 #   "pyelftools",
+#   "coloredlogs",
 # ]
 # ///
 """
@@ -18,7 +19,7 @@ Usage:
 """
 
 import argparse
-import json
+import logging
 import os
 import re
 import subprocess
@@ -33,22 +34,23 @@ try:
     from rich.table import Table
     from rich.text import Text
     from rich.panel import Panel
-    from rich.columns import Columns
-    from rich.syntax import Syntax
-    from rich import print as rprint
-    from rich.style import Style
-    from rich.theme import Theme
 except ImportError:
-    print("Missing 'rich'. Install with:  pip install rich pyelftools")
+    print("Missing 'rich'. Install with:  pip install rich pyelftools coloredlogs")
     sys.exit(1)
 
 try:
     from elftools.elf.elffile import ELFFile
-    from elftools.dwarf.descriptions import describe_form_class
-    from elftools.dwarf.lineprogram import LineProgram
 except ImportError:
-    print("Missing 'pyelftools'. Install with:  pip install rich pyelftools")
+    print("Missing 'pyelftools'. Install with:  pip install rich pyelftools coloredlogs")
     sys.exit(1)
+
+try:
+    import coloredlogs
+except ImportError:
+    print("Missing 'coloredlogs'. Install with:  pip install rich pyelftools coloredlogs")
+    sys.exit(1)
+
+log = logging.getLogger(__name__)
 
 # ── color palette for source line → asm mapping ─────────────────────────────
 PALETTE = [
@@ -155,15 +157,14 @@ def disassemble_range(
     objdump: str,
     start: int,
     end: int,
-    debug: bool = False,
 ) -> list[tuple[int, str, str]]:
     """
     Run objdump and return list of (addr, bytes_hex, mnemonic) for
     instructions in [start, end).
     """
-    # --start-address / --stop-address work on both GNU and LLVM objdump
-    # Note: do NOT use --no-show-raw-insn; the regex requires raw bytes to be
-    # present so it can distinguish the byte field from the mnemonic field.
+    # --start-address / --stop-address work on both GNU and LLVM objdump.
+    # Do NOT use --no-show-raw-insn: the regex relies on raw bytes being present
+    # to separate the byte field from the mnemonic field.
     cmd = [
         objdump,
         "-d",
@@ -171,33 +172,30 @@ def disassemble_range(
         f"--stop-address=0x{end:x}",
         elf_path,
     ]
-    if debug:
-        console.print(f"[dim]Running: {' '.join(cmd)}[/]")
+    log.debug("Running: %s", " ".join(cmd))
 
     result = subprocess.run(cmd, capture_output=True, text=True)
+    out_lines = result.stdout.splitlines()
 
-    if debug:
-        out_lines = result.stdout.splitlines()
-        console.print(f"[dim]objdump exit code: {result.returncode}  ({len(out_lines)} lines of output)[/]")
-        if result.stderr.strip():
-            console.print(f"[dim yellow]stderr: {result.stderr.strip()[:300]}[/]")
-        console.print(f"[dim]First 30 output lines:[/]")
-        for ln in out_lines[:30]:
-            console.print(f"[dim]  {ln!r}[/]")
+    log.debug("objdump exit code: %d  (%d lines of output)", result.returncode, len(out_lines))
+    if result.stderr.strip():
+        log.debug("objdump stderr: %s", result.stderr.strip()[:300])
+    for ln in out_lines[:30]:
+        log.debug("  %r", ln)
 
     if result.returncode != 0:
-        console.print(f"[red]objdump failed (exit {result.returncode}):[/] {result.stderr[:500]}")
+        log.error("objdump failed (exit %d): %s", result.returncode, result.stderr[:500])
         return []
 
     instructions = []
     # Pattern with raw bytes (GNU/LLVM default):
     #   8000120:   e92d 4ff0   push    {r4, r5, r6, r7, r8, r9, sl, fp, lr}
     pat_bytes = re.compile(r"^\s*([0-9a-f]+):\s+([0-9a-f][0-9a-f ]*?)\s{2,}(.+)$")
-    # Fallback pattern when bytes are absent (--no-show-raw-insn or some toolchains):
+    # Fallback when bytes are absent (some toolchains / --no-show-raw-insn):
     #   8000120:   push    {r4, r5, r6, r7, r8, r9, sl, fp, lr}
     pat_no_bytes = re.compile(r"^\s*([0-9a-f]+):\s+([^\s][^\t]+)$")
 
-    for line in result.stdout.splitlines():
+    for line in out_lines:
         m = pat_bytes.match(line)
         if m:
             addr = int(m.group(1), 16)
@@ -207,11 +205,11 @@ def disassemble_range(
             m = pat_no_bytes.match(line)
             if not m:
                 continue
-            # Only treat as no-bytes format if the "mnemonic" doesn't look like
-            # a pure hex string (which would mean it's actually raw bytes).
+            # Skip if the "mnemonic" looks like a pure hex string (i.e. raw bytes
+            # with no mnemonic following — malformed line).
             candidate = m.group(2).strip()
             if re.fullmatch(r"[0-9a-f ]+", candidate):
-                continue  # looks like raw bytes with no mnemonic — skip
+                continue
             addr = int(m.group(1), 16)
             raw = ""
             mnem = candidate
@@ -219,15 +217,13 @@ def disassemble_range(
         if start <= addr < end:
             instructions.append((addr, raw, mnem))
 
-    if debug:
-        console.print(f"[dim]Instructions matched in range 0x{start:x}–0x{end:x}: {len(instructions)}[/]")
-        if not instructions:
-            console.print(
-                "[yellow]Debug hint:[/] zero instructions matched. "
-                "Check that the address range above appears in the objdump output. "
-                "If the output is empty or shows a different range, the ELF may use "
-                "a non-standard section layout or the symbol bounds are wrong."
-            )
+    log.debug("Instructions matched in range 0x%x–0x%x: %d", start, end, len(instructions))
+    if not instructions:
+        log.debug(
+            "Zero instructions matched. Check that the address range appears in "
+            "the objdump output above. If it is empty or shows a different range, "
+            "the ELF may use a non-standard section layout or symbol bounds are wrong."
+        )
 
     return instructions
 
@@ -258,7 +254,6 @@ def render_annotated(
     # assign colors to (file, line) pairs
     color_map: dict[tuple[str, int], str] = {}
     color_idx = 0
-    # Track which source lines are covered
     src_lines_seen: dict[str, set[int]] = defaultdict(set)
 
     for addr, raw, mnem in instructions:
@@ -298,7 +293,6 @@ def render_annotated(
                 # show filename only when file changes
                 if src_file != prev_src_file:
                     short = src_file
-                    # trim to last 3 path components for readability
                     parts = Path(src_file).parts
                     if len(parts) > 3:
                         short = os.path.join("…", *parts[-3:])
@@ -317,7 +311,6 @@ def render_annotated(
         asm_text.append(f"    {addr:08x}  ", style="dim")
         if show_bytes and raw:
             asm_text.append(f"{raw:<24}", style="dim cyan")
-        # color the mnemonic
         parts = mnem.split(None, 1)
         mnem_word = parts[0]
         operands = parts[1] if len(parts) > 1 else ""
@@ -334,7 +327,6 @@ def render_annotated(
         table.add_column("Insns", justify="right")
         table.add_column("Bytes", justify="right", style="yellow")
 
-        # group instructions by source line
         line_stats: dict[tuple, list] = defaultdict(list)
         for addr, raw, mnem in instructions:
             key = addr_to_src.get(addr, ("??", 0))
@@ -377,11 +369,18 @@ def main():
     parser.add_argument("--stats", action="store_true", help="Show per-source-line byte cost table")
     parser.add_argument("--bytes", action="store_true", help="Show raw instruction bytes")
     parser.add_argument("--no-dwarf", action="store_true", help="Skip DWARF source mapping")
-    parser.add_argument("--debug", action="store_true", help="Print raw objdump command, output, and regex diagnostics")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        metavar="LEVEL",
+        help="Logging level: DEBUG, INFO, WARNING, ERROR (default: INFO)",
+    )
     args = parser.parse_args()
 
+    coloredlogs.install(level=args.log_level.upper(), logger=log)
+
     if not os.path.isfile(args.elf):
-        console.print(f"[red]Error:[/] ELF file not found: {args.elf}")
+        log.error("ELF file not found: %s", args.elf)
         sys.exit(1)
 
     # ── list mode ────────────────────────────────────────────────────────────
@@ -403,33 +402,33 @@ def main():
     try:
         objdump = find_objdump(args.objdump)
     except RuntimeError as e:
-        console.print(f"[red]Error:[/] {e}")
+        log.error("%s", e)
         sys.exit(1)
 
-    console.print(f"[dim]Using objdump: {objdump}[/]")
+    log.info("Using objdump: %s", objdump)
 
     # ── resolve function bounds ──────────────────────────────────────────────
     try:
         start, end = get_function_bounds(args.elf, args.function)
     except ValueError as e:
-        console.print(f"[red]Error:[/] {e}")
-        console.print(f"[dim]Tip: run with --list to see all function names.[/]")
+        log.error("%s", e)
+        log.info("Tip: run with --list to see all function names.")
         sys.exit(1)
 
-    console.print(f"[dim]Function range: 0x{start:08x} – 0x{end:08x}  ({end-start} bytes)[/]")
+    log.info("Function range: 0x%08x – 0x%08x  (%d bytes)", start, end, end - start)
 
     # ── DWARF source mapping ─────────────────────────────────────────────────
     addr_to_src: dict[int, tuple[str, int]] = {}
     if not args.no_dwarf:
-        console.print("[dim]Building DWARF address map…[/]")
+        log.info("Building DWARF address map…")
         addr_to_src = build_addr_to_src(args.elf)
         if not addr_to_src:
-            console.print("[yellow]Warning:[/] No DWARF info found. Build with -g to get source mapping.")
+            log.warning("No DWARF info found. Build with -g to get source mapping.")
 
     # ── disassemble ──────────────────────────────────────────────────────────
-    instructions = disassemble_range(args.elf, objdump, start, end, debug=args.debug)
+    instructions = disassemble_range(args.elf, objdump, start, end)
     if not instructions:
-        console.print("[red]No instructions found.[/] Check the ELF is not stripped.")
+        log.error("No instructions found. Check the ELF is not stripped.")
         sys.exit(1)
 
     # ── render ───────────────────────────────────────────────────────────────
