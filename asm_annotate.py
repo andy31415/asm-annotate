@@ -65,7 +65,7 @@ _missing_warned: set[str] = set()
 def _apply_remappings(path: str, remappings: tuple[tuple[str, str], ...]) -> str:
     for old, new in remappings:
         if path.startswith(old):
-            return new + path[len(old):]
+            return new + path[len(old) :]
     return path
 
 
@@ -89,7 +89,9 @@ def read_source_lines(
             if resolved != path:
                 log.warning("Source not found: %s  (remapped from %s)", resolved, path)
             else:
-                log.warning("Source not found: %s  (use --remap to redirect paths)", path)
+                log.warning(
+                    "Source not found: %s  (use --remap to redirect paths)", path
+                )
         _source_cache[resolved] = []
         return []
 
@@ -250,24 +252,51 @@ def render_annotated(
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("elf", type=click.Path(exists=True, dir_okay=False))
 @click.argument("function", required=False, default=None)
-@click.option("--objdump", metavar="BINARY",
-              help="objdump binary to use (auto-detected if omitted)")
-@click.option("--list", "do_list", is_flag=True,
-              help="List all functions in the ELF and exit")
-@click.option("--stats", is_flag=True,
-              help="Show per-source-line instruction/byte cost table")
-@click.option("--bytes", "show_bytes", is_flag=True,
-              help="Show raw instruction bytes alongside mnemonics")
-@click.option("--no-dwarf", is_flag=True,
-              help="Skip DWARF source mapping")
-@click.option("--no-demangle", is_flag=True,
-              help="Do not demangle C++ symbol names")
-@click.option("--remap", type=(str, str), multiple=True, metavar="OLD NEW",
-              help="Remap a source path prefix. E.g. --remap /workspace /home/user/src  (repeatable)")
-@click.option("--log-level", default="INFO", metavar="LEVEL", show_default=True,
-              help="Logging verbosity: DEBUG, INFO, WARNING, ERROR")
-def main(elf, function, objdump, do_list, stats, show_bytes, no_dwarf, no_demangle,
-         remap, log_level):
+@click.option(
+    "--objdump",
+    metavar="BINARY",
+    help="objdump binary to use (auto-detected if omitted)",
+)
+@click.option(
+    "--list", "do_list", is_flag=True, help="List all functions in the ELF and exit"
+)
+@click.option(
+    "--stats", is_flag=True, help="Show per-source-line instruction/byte cost table"
+)
+@click.option(
+    "--bytes",
+    "show_bytes",
+    is_flag=True,
+    help="Show raw instruction bytes alongside mnemonics",
+)
+@click.option("--no-dwarf", is_flag=True, help="Skip DWARF source mapping")
+@click.option("--no-demangle", is_flag=True, help="Do not demangle C++ symbol names")
+@click.option(
+    "--remap",
+    type=(str, str),
+    multiple=True,
+    metavar="OLD NEW",
+    help="Remap a source path prefix. E.g. --remap /workspace /home/user/src  (repeatable)",
+)
+@click.option(
+    "--log-level",
+    default="INFO",
+    metavar="LEVEL",
+    show_default=True,
+    help="Logging verbosity: DEBUG, INFO, WARNING, ERROR",
+)
+def main(
+    elf,
+    function,
+    objdump,
+    do_list,
+    stats,
+    show_bytes,
+    no_dwarf,
+    no_demangle,
+    remap,
+    log_level,
+):
     coloredlogs.install(level=log_level.upper(), logger=log)
 
     # ── list mode ────────────────────────────────────────────────────────────
@@ -292,7 +321,9 @@ def main(elf, function, objdump, do_list, stats, show_bytes, no_dwarf, no_demang
         return
 
     if not function:
-        raise click.UsageError("Provide a function name, or use --list to see available functions.")
+        raise click.UsageError(
+            "Provide a function name, or use --list to see available functions."
+        )
 
     # ── find objdump ─────────────────────────────────────────────────────────
     try:
@@ -327,7 +358,9 @@ def main(elf, function, objdump, do_list, stats, show_bytes, no_dwarf, no_demang
     # ── disassemble ──────────────────────────────────────────────────────────
     instructions = disassemble_range(elf, objdump_bin, start, end)
     if not instructions:
-        raise click.ClickException("No instructions found. Check the ELF is not stripped.")
+        raise click.ClickException(
+            "No instructions found. Check the ELF is not stripped."
+        )
 
     # ── demangle ─────────────────────────────────────────────────────────────
     func_name = func_sym

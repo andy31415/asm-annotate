@@ -246,7 +246,9 @@ class Handler(BaseHTTPRequestHandler):
         func = body.get("func", "")
         try:
             start, end = get_function_bounds(STATE.elf_path, func)
-            STATE.instructions = disassemble_range(STATE.elf_path, STATE.objdump, start, end)
+            STATE.instructions = disassemble_range(
+                STATE.elf_path, STATE.objdump, start, end
+            )
             STATE.func_name = func
             STATE.error = None
             self.send_json({"ok": True})
