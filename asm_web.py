@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#   "pyelftools",
+#   "coloredlogs",
+# ]
+# ///
 """
 asm_web.py — Local web server: side-by-side source↔asm with live recompile.
 
@@ -11,141 +18,30 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
-import re
 import subprocess
 import sys
 import tempfile
-import threading
-import time
-from collections import defaultdict
-from pathlib import Path
-from typing import Optional
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 
-try:
-    from elftools.elf.elffile import ELFFile
-except ImportError:
-    print("Missing pyelftools. Install with: pip install pyelftools")
-    sys.exit(1)
+import coloredlogs
+
+from asm_core import (
+    build_addr_to_src,
+    disassemble_range,
+    find_objdump,
+    get_function_bounds,
+    list_functions,
+)
+
+log = logging.getLogger(__name__)
 
 
-# ── toolchain detection ──────────────────────────────────────────────────────
-def find_objdump(hint=None):
-    candidates = [hint] if hint else []
-    candidates += ["arm-none-eabi-objdump", "llvm-objdump", "objdump"]
-    for c in candidates:
-        try:
-            subprocess.run([c, "--version"], capture_output=True, check=True)
-            return c
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            continue
-    return None
-
-
-# ── ELF helpers ──────────────────────────────────────────────────────────────
-def get_function_bounds(elf_path, func_name):
-    with open(elf_path, "rb") as f:
-        elf = ELFFile(f)
-        for section in elf.iter_sections():
-            if section.header.sh_type not in ("SHT_SYMTAB", "SHT_DYNSYM"):
-                continue
-            for sym in section.iter_symbols():
-                if sym.name == func_name and sym.entry.st_info.type == "STT_FUNC":
-                    start = sym.entry.st_value & ~1
-                    size = sym.entry.st_size
-                    return start, start + size
-    raise ValueError(f"Function '{func_name}' not found.")
-
-
-def list_functions(elf_path):
-    funcs = []
-    with open(elf_path, "rb") as f:
-        elf = ELFFile(f)
-        for section in elf.iter_sections():
-            if section.header.sh_type not in ("SHT_SYMTAB", "SHT_DYNSYM"):
-                continue
-            for sym in section.iter_symbols():
-                if sym.entry.st_info.type == "STT_FUNC" and sym.name:
-                    funcs.append(
-                        {
-                            "name": sym.name,
-                            "addr": sym.entry.st_value & ~1,
-                            "size": sym.entry.st_size,
-                        }
-                    )
-    return sorted(funcs, key=lambda x: x["addr"])
-
-
-def build_addr_to_src(elf_path):
-    mapping = {}
-    with open(elf_path, "rb") as f:
-        elf = ELFFile(f)
-        if not elf.has_dwarf_info():
-            return mapping
-        dwarf = elf.get_dwarf_info()
-        for cu in dwarf.iter_CUs():
-            lp = dwarf.line_program_for_CU(cu)
-            if not lp:
-                continue
-            file_entries = lp.header.file_entry
-            for entry in lp.get_entries():
-                if entry.state is None:
-                    continue
-                state = entry.state
-                if state.file and state.file <= len(file_entries):
-                    fe = file_entries[state.file - 1]
-                    fname = fe.name.decode() if isinstance(fe.name, bytes) else fe.name
-                    if fe.dir_index > 0:
-                        dirs = lp.header.include_directory
-                        if fe.dir_index <= len(dirs):
-                            d = dirs[fe.dir_index - 1]
-                            d = d.decode() if isinstance(d, bytes) else d
-                            fname = os.path.join(d, fname)
-                    mapping[state.address] = (fname, state.line)
-    return mapping
-
-
-def disassemble_range(elf_path, objdump, start, end):
-    cmd = [
-        objdump,
-        "-d",
-        "--no-show-raw-insn",
-        f"--start-address=0x{start:x}",
-        f"--stop-address=0x{end:x}",
-        elf_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        cmd.remove("--no-show-raw-insn")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-    instructions = []
-    pat = re.compile(r"^\s*([0-9a-f]+):\s+([0-9a-f ]+?)\s{2,}(.+)$")
-    # also handle --no-show-raw-insn format
-    pat2 = re.compile(r"^\s*([0-9a-f]+):\s+(.+)$")
-    for line in result.stdout.splitlines():
-        m = pat.match(line)
-        if m:
-            addr = int(m.group(1), 16)
-            if start <= addr < end:
-                instructions.append(
-                    {
-                        "addr": addr,
-                        "raw": m.group(2).strip(),
-                        "mnem": m.group(3).strip(),
-                    }
-                )
-        else:
-            m2 = pat2.match(line)
-            if m2:
-                addr = int(m2.group(1), 16)
-                if start <= addr < end:
-                    instructions.append(
-                        {"addr": addr, "raw": "", "mnem": m2.group(2).strip()}
-                    )
-    return instructions
+def _insns_to_dicts(instructions):
+    """Convert (addr, raw, mnem) tuples to the dicts expected by the JS frontend."""
+    return [{"addr": a, "raw": r, "mnem": m} for a, r, m in instructions]
 
 
 # ── compile_commands.json lookup ─────────────────────────────────────────────
@@ -338,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "elf": STATE.elf_path,
                 "func": STATE.func_name,
-                "instructions": STATE.instructions,
+                "instructions": _insns_to_dicts(STATE.instructions),
                 "addr_to_src": addr_src_serializable,
                 "source_files": src_files,
                 "error": STATE.error,
@@ -348,16 +244,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_list_functions(self):
         funcs = list_functions(STATE.elf_path)
-        self.send_json(funcs)
+        self.send_json([{"name": n, "addr": a, "size": s} for n, a, s in funcs])
 
     def api_switch_function(self):
         body = json.loads(self.read_body())
         func = body.get("func", "")
         try:
             start, end = get_function_bounds(STATE.elf_path, func)
-            instructions = disassemble_range(STATE.elf_path, STATE.objdump, start, end)
+            STATE.instructions = disassemble_range(STATE.elf_path, STATE.objdump, start, end)
             STATE.func_name = func
-            STATE.instructions = instructions
             STATE.error = None
             self.send_json({"ok": True})
         except Exception as e:
@@ -384,7 +279,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(
                 {
                     "ok": True,
-                    "instructions": instructions,
+                    "instructions": _insns_to_dicts(instructions),
                     "addr_to_src": addr_src_serializable,
                 }
             )
@@ -987,44 +882,53 @@ def main():
     parser.add_argument(
         "--port", type=int, default=7777, help="Port to serve on (default: 7777)"
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        metavar="LEVEL",
+        help="Logging level: DEBUG, INFO, WARNING, ERROR (default: INFO)",
+    )
     args = parser.parse_args()
 
+    coloredlogs.install(level=args.log_level.upper(), logger=log)
+
     if not os.path.isfile(args.elf):
-        print(f"Error: ELF file not found: {args.elf}")
+        log.error("ELF file not found: %s", args.elf)
         sys.exit(1)
 
-    objdump = find_objdump(args.objdump)
-    if not objdump:
-        print("Warning: No objdump found. Disassembly will be empty.")
+    try:
+        objdump = find_objdump(args.objdump)
+    except RuntimeError as e:
+        log.error("%s", e)
+        sys.exit(1)
 
-    print(f"Loading ELF: {args.elf}")
-    print(f"Function:    {args.function}")
-    print(f"Objdump:     {objdump or 'not found'}")
+    log.info("Loading ELF: %s", args.elf)
+    log.info("Function:    %s", args.function)
+    log.info("Objdump:     %s", objdump)
 
     STATE.elf_path = args.elf
     STATE.func_name = args.function
-    STATE.objdump = objdump or "objdump"
+    STATE.objdump = objdump
     STATE.compile_commands = args.compile_commands
 
     try:
         start, end = get_function_bounds(args.elf, args.function)
-        print(f"Address:     0x{start:08x} – 0x{end:08x} ({end-start} bytes)")
+        log.info("Address:     0x%08x – 0x%08x (%d bytes)", start, end, end - start)
         STATE.addr_to_src = build_addr_to_src(args.elf)
         STATE.instructions = disassemble_range(args.elf, STATE.objdump, start, end)
-        print(f"Instructions: {len(STATE.instructions)}")
+        log.info("Instructions: %d", len(STATE.instructions))
         if not STATE.addr_to_src:
-            print("Warning: No DWARF info. Build with -g for source mapping.")
+            log.warning("No DWARF info. Build with -g for source mapping.")
     except Exception as e:
         STATE.error = str(e)
-        print(f"Error: {e}")
+        log.error("%s", e)
 
-    print(f"\n🚀  Open http://localhost:{args.port}\n")
+    log.info("Open http://localhost:%d", args.port)
     server = HTTPServer(("0.0.0.0", args.port), Handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopped.")
+        log.info("Stopped.")
 
 
-if __name__ == "__main__":
-    main()
+main()
