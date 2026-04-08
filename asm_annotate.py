@@ -200,9 +200,7 @@ def build_groups(
 
 # ── shared helpers ────────────────────────────────────────────────────────────
 def _count_bytes(instructions: list[tuple[int, str, str]]) -> int:
-    return sum(
-        len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in instructions if r
-    )
+    return sum(len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in instructions if r)
 
 
 def _short_path(path: str, depth: int = 3) -> str:
@@ -276,7 +274,9 @@ def render_unified(
         # file header when file changes and source is readable (matches original)
         if group.show_file_header and group.src_file and group.src_lines:
             short = _short_path(group.src_file, 3)
-            lineno = f":{group.src_line_start}" if group.src_line_start is not None else ""
+            lineno = (
+                f":{group.src_line_start}" if group.src_line_start is not None else ""
+            )
             console.print(f"  [dim italic]{short}[/][dim]{lineno}[/]")
 
         for i, src_text in enumerate(group.src_lines):
