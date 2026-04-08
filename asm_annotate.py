@@ -5,26 +5,19 @@
 #   "rich",
 #   "pyelftools",
 #   "coloredlogs",
+#   "click",
 # ]
 # ///
 """
 asm_annotate.py — Colored source↔assembly annotator for ELF files.
-
-Usage:
-    python asm_annotate.py <elf_file> <function_name> [options]
-    python asm_annotate.py firmware.elf my_function
-    python asm_annotate.py firmware.elf my_function --objdump arm-none-eabi-objdump
-    python asm_annotate.py firmware.elf my_function --stats
-    python asm_annotate.py firmware.elf --list   # list all functions
 """
 
-import argparse
 import logging
 import os
-import sys
 from collections import defaultdict
 from pathlib import Path
 
+import click
 import coloredlogs
 from rich.console import Console
 from rich.panel import Panel
@@ -66,17 +59,38 @@ console = Console(highlight=False)
 
 # ── source file reading ──────────────────────────────────────────────────────
 _source_cache: dict[str, list[str]] = {}
+_missing_warned: set[str] = set()
 
 
-def read_source_lines(path: str) -> list[str]:
-    if path in _source_cache:
-        return _source_cache[path]
+def _apply_remappings(path: str, remappings: tuple[tuple[str, str], ...]) -> str:
+    for old, new in remappings:
+        if path.startswith(old):
+            return new + path[len(old):]
+    return path
+
+
+def read_source_lines(
+    path: str,
+    remappings: tuple[tuple[str, str], ...] = (),
+) -> list[str]:
+    resolved = _apply_remappings(path, remappings)
+
+    if resolved in _source_cache:
+        return _source_cache[resolved]
+
     try:
-        with open(path, "r", errors="replace") as f:
+        with open(resolved, "r", errors="replace") as f:
             lines = f.readlines()
-        _source_cache[path] = lines
+        _source_cache[resolved] = lines
         return lines
     except OSError:
+        if path not in _missing_warned:
+            _missing_warned.add(path)
+            if resolved != path:
+                log.warning("Source not found: %s  (remapped from %s)", resolved, path)
+            else:
+                log.warning("Source not found: %s  (use --remap to redirect paths)", path)
+        _source_cache[resolved] = []
         return []
 
 
@@ -87,6 +101,7 @@ def render_annotated(
     addr_to_src: dict[int, tuple[str, int]],
     show_stats: bool,
     show_bytes: bool,
+    remappings: tuple[tuple[str, str], ...] = (),
 ) -> None:
     # assign colors to (file, line) pairs
     color_map: dict[tuple[str, int], str] = {}
@@ -128,7 +143,7 @@ def render_annotated(
         # emit source line when it changes
         if src_key and src_key != prev_src_key:
             src_file, src_line_no = src_key
-            src_lines = read_source_lines(src_file)
+            src_lines = read_source_lines(src_file, remappings)
             if src_lines and 0 < src_line_no <= len(src_lines):
                 src_text = src_lines[src_line_no - 1].rstrip()
                 # show filename only when file changes
@@ -183,7 +198,7 @@ def render_annotated(
             byte_count = sum(
                 len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in insns if r
             )
-            src_lines = read_source_lines(src_file)
+            src_lines = read_source_lines(src_file, remappings)
             src_text = ""
             if src_lines and 0 < src_line_no <= len(src_lines):
                 src_text = src_lines[src_line_no - 1].strip()[:60]
@@ -212,52 +227,35 @@ def render_annotated(
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(
-        description="Colored source↔assembly annotator for ELF files.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument("elf", help="Path to ELF file")
-    parser.add_argument("function", nargs="?", help="Function name to disassemble")
-    parser.add_argument(
-        "--objdump", help="Path/name of objdump binary (auto-detected if omitted)"
-    )
-    parser.add_argument(
-        "--list", action="store_true", help="List all functions in the ELF"
-    )
-    parser.add_argument(
-        "--stats", action="store_true", help="Show per-source-line byte cost table"
-    )
-    parser.add_argument(
-        "--bytes", action="store_true", help="Show raw instruction bytes"
-    )
-    parser.add_argument(
-        "--no-dwarf", action="store_true", help="Skip DWARF source mapping"
-    )
-    parser.add_argument(
-        "--no-demangle", action="store_true", help="Do not demangle C++ symbol names"
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        metavar="LEVEL",
-        help="Logging level: DEBUG, INFO, WARNING, ERROR (default: INFO)",
-    )
-    args = parser.parse_args()
-
-    coloredlogs.install(level=args.log_level.upper(), logger=log)
-
-    if not os.path.isfile(args.elf):
-        log.error("ELF file not found: %s", args.elf)
-        sys.exit(1)
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.argument("elf", type=click.Path(exists=True, dir_okay=False))
+@click.argument("function", required=False, default=None)
+@click.option("--objdump", metavar="BINARY",
+              help="objdump binary to use (auto-detected if omitted)")
+@click.option("--list", "do_list", is_flag=True,
+              help="List all functions in the ELF and exit")
+@click.option("--stats", is_flag=True,
+              help="Show per-source-line instruction/byte cost table")
+@click.option("--bytes", "show_bytes", is_flag=True,
+              help="Show raw instruction bytes alongside mnemonics")
+@click.option("--no-dwarf", is_flag=True,
+              help="Skip DWARF source mapping")
+@click.option("--no-demangle", is_flag=True,
+              help="Do not demangle C++ symbol names")
+@click.option("--remap", type=(str, str), multiple=True, metavar="OLD NEW",
+              help="Remap a source path prefix. E.g. --remap /workspace /home/user/src  (repeatable)")
+@click.option("--log-level", default="INFO", metavar="LEVEL", show_default=True,
+              help="Logging verbosity: DEBUG, INFO, WARNING, ERROR")
+def main(elf, function, objdump, do_list, stats, show_bytes, no_dwarf, no_demangle,
+         remap, log_level):
+    coloredlogs.install(level=log_level.upper(), logger=log)
 
     # ── list mode ────────────────────────────────────────────────────────────
-    if args.list:
-        funcs = list_functions(args.elf)
+    if do_list:
+        funcs = list_functions(elf)
         all_names = [n for n, _, _ in funcs]
-        dm = {} if args.no_demangle else demangle_batch(all_names)
-        table = Table(title=f"Functions in {os.path.basename(args.elf)}")
+        dm = {} if no_demangle else demangle_batch(all_names)
+        table = Table(title=f"Functions in {os.path.basename(elf)}")
         table.add_column("Address", style="cyan", no_wrap=True)
         table.add_column("Size (bytes)", justify="right", style="yellow")
         table.add_column("Name", style="dim")
@@ -273,54 +271,47 @@ def main():
         console.print(table)
         return
 
-    if not args.function:
-        parser.error(
-            "Provide a function name, or use --list to see available functions."
-        )
+    if not function:
+        raise click.UsageError("Provide a function name, or use --list to see available functions.")
 
     # ── find objdump ─────────────────────────────────────────────────────────
     try:
-        objdump = find_objdump(args.objdump)
+        objdump_bin = find_objdump(objdump)
     except RuntimeError as e:
-        log.error("%s", e)
-        sys.exit(1)
+        raise click.ClickException(str(e))
 
-    log.info("Using objdump: %s", objdump)
+    log.info("Using objdump: %s", objdump_bin)
 
     # ── resolve function (fuzzy match / picker) ──────────────────────────────
     try:
-        func_sym = pick_function(args.elf, args.function)
+        func_sym = pick_function(elf, function)
     except ValueError as e:
-        log.error("%s", e)
-        log.info("Tip: run with --list to see all function names.")
-        sys.exit(1)
+        raise click.ClickException(str(e))
 
     # ── resolve function bounds ──────────────────────────────────────────────
     try:
-        start, end = get_function_bounds(args.elf, func_sym)
+        start, end = get_function_bounds(elf, func_sym)
     except ValueError as e:
-        log.error("%s", e)
-        sys.exit(1)
+        raise click.ClickException(str(e))
 
     log.info("Function range: 0x%08x – 0x%08x  (%d bytes)", start, end, end - start)
 
     # ── DWARF source mapping ─────────────────────────────────────────────────
     addr_to_src: dict[int, tuple[str, int]] = {}
-    if not args.no_dwarf:
+    if not no_dwarf:
         log.info("Building DWARF address map…")
-        addr_to_src = build_addr_to_src(args.elf)
+        addr_to_src = build_addr_to_src(elf)
         if not addr_to_src:
             log.warning("No DWARF info found. Build with -g to get source mapping.")
 
     # ── disassemble ──────────────────────────────────────────────────────────
-    instructions = disassemble_range(args.elf, objdump, start, end)
+    instructions = disassemble_range(elf, objdump_bin, start, end)
     if not instructions:
-        log.error("No instructions found. Check the ELF is not stripped.")
-        sys.exit(1)
+        raise click.ClickException("No instructions found. Check the ELF is not stripped.")
 
     # ── demangle ─────────────────────────────────────────────────────────────
     func_name = func_sym
-    if not args.no_demangle:
+    if not no_demangle:
         func_name, instructions = apply_demangling(func_name, instructions)
 
     # ── render ───────────────────────────────────────────────────────────────
@@ -328,10 +319,10 @@ def main():
         func_name=func_name,
         instructions=instructions,
         addr_to_src=addr_to_src,
-        show_stats=args.stats,
-        show_bytes=args.bytes,
+        show_stats=stats,
+        show_bytes=show_bytes,
+        remappings=remap,
     )
 
 
-if __name__ == "__main__":
-    main()
+main()
