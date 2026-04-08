@@ -109,6 +109,17 @@ def apply_demangling(
 
 
 # ── toolchain detection ──────────────────────────────────────────────────────
+def find_fuzzy_picker() -> Optional[str]:
+    """Return the path to skim (sk) or fzf, whichever is available."""
+    for tool in ["sk", "fzf"]:
+        try:
+            subprocess.run([tool, "--version"], capture_output=True, check=True)
+            return tool
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return None
+
+
 def find_objdump(hint: Optional[str] = None) -> str:
     candidates = []
     if hint:
@@ -164,6 +175,70 @@ def list_functions(elf_path: str) -> list[tuple[str, int, int]]:
                         )
                     )
     return sorted(funcs, key=lambda x: x[1])
+
+
+# ── function picker ──────────────────────────────────────────────────────────
+def pick_function(elf_path: str, query: str) -> str:
+    """
+    Resolve *query* to a mangled function name.
+
+    - Exact mangled match → use directly.
+    - Substring match (mangled or demangled) on exactly one function → use it.
+    - Substring match on many functions → launch sk/fzf for interactive pick.
+    """
+    funcs = list_functions(elf_path)  # [(mangled, addr, size), …]
+    all_names = [n for n, _, _ in funcs]
+    dm = demangle_batch(all_names)
+
+    # Exact mangled match wins immediately.
+    if any(n == query for n, _, _ in funcs):
+        return query
+
+    q = query.lower()
+    matches = [
+        (name, addr, size, dm.get(name, name))
+        for name, addr, size in funcs
+        if q in name.lower() or q in dm.get(name, name).lower()
+    ]
+
+    if not matches:
+        raise ValueError(f"No function matching '{query}' found in ELF.")
+
+    if len(matches) == 1:
+        log.info("Matched function: %s", dm.get(matches[0][0], matches[0][0]))
+        return matches[0][0]
+
+    picker = find_fuzzy_picker()
+    if picker is None:
+        msg_lines = "\n".join(
+            f"  {dm.get(n, n)}" for n, _, _, _ in matches
+        )
+        raise ValueError(
+            f"{len(matches)} functions match '{query}'. "
+            f"Install sk or fzf for interactive selection, or be more specific.\n"
+            f"Matches:\n{msg_lines}"
+        )
+
+    # Build picker input: one line per match, address is the key to map back.
+    lines = [
+        f"0x{addr:08x}  {size:>6}  {demangled}"
+        for name, addr, size, demangled in matches
+    ]
+    result = subprocess.run(
+        [picker, "--query", query],
+        input="\n".join(lines),
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ValueError("No function selected.")
+
+    selected = result.stdout.strip().splitlines()[0]
+    selected_addr = int(selected.split()[0], 16)
+    for name, addr, size, _ in matches:
+        if addr == selected_addr:
+            return name
+    raise ValueError("Could not map picker selection back to a function name.")
 
 
 # ── DWARF: addr → (file, line) ───────────────────────────────────────────────
@@ -472,12 +547,21 @@ def main():
     # ── list mode ────────────────────────────────────────────────────────────
     if args.list:
         funcs = list_functions(args.elf)
+        all_names = [n for n, _, _ in funcs]
+        dm = {} if args.no_demangle else demangle_batch(all_names)
         table = Table(title=f"Functions in {os.path.basename(args.elf)}")
         table.add_column("Address", style="cyan", no_wrap=True)
         table.add_column("Size (bytes)", justify="right", style="yellow")
-        table.add_column("Name", style="white")
+        table.add_column("Name", style="dim")
+        table.add_column("Demangled", style="white")
         for name, addr, size in funcs:
-            table.add_row(f"0x{addr:08x}", str(size), name)
+            demangled = dm.get(name, name)
+            table.add_row(
+                f"0x{addr:08x}",
+                str(size),
+                name,
+                "" if demangled == name else demangled,
+            )
         console.print(table)
         return
 
@@ -495,12 +579,19 @@ def main():
 
     log.info("Using objdump: %s", objdump)
 
-    # ── resolve function bounds ──────────────────────────────────────────────
+    # ── resolve function (fuzzy match / picker) ──────────────────────────────
     try:
-        start, end = get_function_bounds(args.elf, args.function)
+        func_sym = pick_function(args.elf, args.function)
     except ValueError as e:
         log.error("%s", e)
         log.info("Tip: run with --list to see all function names.")
+        sys.exit(1)
+
+    # ── resolve function bounds ──────────────────────────────────────────────
+    try:
+        start, end = get_function_bounds(args.elf, func_sym)
+    except ValueError as e:
+        log.error("%s", e)
         sys.exit(1)
 
     log.info("Function range: 0x%08x – 0x%08x  (%d bytes)", start, end, end - start)
@@ -520,7 +611,7 @@ def main():
         sys.exit(1)
 
     # ── demangle ─────────────────────────────────────────────────────────────
-    func_name = args.function
+    func_name = func_sym
     if not args.no_demangle:
         func_name, instructions = apply_demangling(func_name, instructions)
 
