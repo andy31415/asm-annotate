@@ -28,27 +28,12 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-# ── dependency check ────────────────────────────────────────────────────────
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.text import Text
-    from rich.panel import Panel
-except ImportError:
-    print("Missing 'rich'. Install with:  pip install rich pyelftools coloredlogs")
-    sys.exit(1)
-
-try:
-    from elftools.elf.elffile import ELFFile
-except ImportError:
-    print("Missing 'pyelftools'. Install with:  pip install rich pyelftools coloredlogs")
-    sys.exit(1)
-
-try:
-    import coloredlogs
-except ImportError:
-    print("Missing 'coloredlogs'. Install with:  pip install rich pyelftools coloredlogs")
-    sys.exit(1)
+import coloredlogs
+from elftools.elf.elffile import ELFFile
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 log = logging.getLogger(__name__)
 
