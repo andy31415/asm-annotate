@@ -155,38 +155,80 @@ def disassemble_range(
     objdump: str,
     start: int,
     end: int,
+    debug: bool = False,
 ) -> list[tuple[int, str, str]]:
     """
     Run objdump and return list of (addr, bytes_hex, mnemonic) for
     instructions in [start, end).
     """
     # --start-address / --stop-address work on both GNU and LLVM objdump
+    # Note: do NOT use --no-show-raw-insn; the regex requires raw bytes to be
+    # present so it can distinguish the byte field from the mnemonic field.
     cmd = [
         objdump,
         "-d",
-        "--no-show-raw-insn",  # cleaner; we add bytes separately
         f"--start-address=0x{start:x}",
         f"--stop-address=0x{end:x}",
         elf_path,
     ]
-    # LLVM objdump needs --arch-name for bare-metal ELFs sometimes
+    if debug:
+        console.print(f"[dim]Running: {' '.join(cmd)}[/]")
+
     result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if debug:
+        out_lines = result.stdout.splitlines()
+        console.print(f"[dim]objdump exit code: {result.returncode}  ({len(out_lines)} lines of output)[/]")
+        if result.stderr.strip():
+            console.print(f"[dim yellow]stderr: {result.stderr.strip()[:300]}[/]")
+        console.print(f"[dim]First 30 output lines:[/]")
+        for ln in out_lines[:30]:
+            console.print(f"[dim]  {ln!r}[/]")
+
     if result.returncode != 0:
-        # retry without --no-show-raw-insn (older GNU)
-        cmd.remove("--no-show-raw-insn")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        console.print(f"[red]objdump failed (exit {result.returncode}):[/] {result.stderr[:500]}")
+        return []
 
     instructions = []
-    # Pattern:   8000120:   e92d 4ff0   push    {r4, r5, r6, r7, r8, r9, sl, fp, lr}
-    pat = re.compile(r"^\s*([0-9a-f]+):\s+([0-9a-f ]+?)\s{2,}(.+)$")
+    # Pattern with raw bytes (GNU/LLVM default):
+    #   8000120:   e92d 4ff0   push    {r4, r5, r6, r7, r8, r9, sl, fp, lr}
+    pat_bytes = re.compile(r"^\s*([0-9a-f]+):\s+([0-9a-f][0-9a-f ]*?)\s{2,}(.+)$")
+    # Fallback pattern when bytes are absent (--no-show-raw-insn or some toolchains):
+    #   8000120:   push    {r4, r5, r6, r7, r8, r9, sl, fp, lr}
+    pat_no_bytes = re.compile(r"^\s*([0-9a-f]+):\s+([^\s][^\t]+)$")
+
     for line in result.stdout.splitlines():
-        m = pat.match(line)
+        m = pat_bytes.match(line)
         if m:
             addr = int(m.group(1), 16)
             raw = m.group(2).strip()
             mnem = m.group(3).strip()
-            if start <= addr < end:
-                instructions.append((addr, raw, mnem))
+        else:
+            m = pat_no_bytes.match(line)
+            if not m:
+                continue
+            # Only treat as no-bytes format if the "mnemonic" doesn't look like
+            # a pure hex string (which would mean it's actually raw bytes).
+            candidate = m.group(2).strip()
+            if re.fullmatch(r"[0-9a-f ]+", candidate):
+                continue  # looks like raw bytes with no mnemonic — skip
+            addr = int(m.group(1), 16)
+            raw = ""
+            mnem = candidate
+
+        if start <= addr < end:
+            instructions.append((addr, raw, mnem))
+
+    if debug:
+        console.print(f"[dim]Instructions matched in range 0x{start:x}–0x{end:x}: {len(instructions)}[/]")
+        if not instructions:
+            console.print(
+                "[yellow]Debug hint:[/] zero instructions matched. "
+                "Check that the address range above appears in the objdump output. "
+                "If the output is empty or shows a different range, the ELF may use "
+                "a non-standard section layout or the symbol bounds are wrong."
+            )
+
     return instructions
 
 
@@ -335,6 +377,7 @@ def main():
     parser.add_argument("--stats", action="store_true", help="Show per-source-line byte cost table")
     parser.add_argument("--bytes", action="store_true", help="Show raw instruction bytes")
     parser.add_argument("--no-dwarf", action="store_true", help="Skip DWARF source mapping")
+    parser.add_argument("--debug", action="store_true", help="Print raw objdump command, output, and regex diagnostics")
     args = parser.parse_args()
 
     if not os.path.isfile(args.elf):
@@ -384,7 +427,7 @@ def main():
             console.print("[yellow]Warning:[/] No DWARF info found. Build with -g to get source mapping.")
 
     # ── disassemble ──────────────────────────────────────────────────────────
-    instructions = disassemble_range(args.elf, objdump, start, end)
+    instructions = disassemble_range(args.elf, objdump, start, end, debug=args.debug)
     if not instructions:
         console.print("[red]No instructions found.[/] Check the ELF is not stripped.")
         sys.exit(1)
