@@ -30,6 +30,7 @@ except ImportError:
     print("Missing pyelftools. Install with: pip install pyelftools")
     sys.exit(1)
 
+
 # ── toolchain detection ──────────────────────────────────────────────────────
 def find_objdump(hint=None):
     candidates = [hint] if hint else []
@@ -67,11 +68,13 @@ def list_functions(elf_path):
                 continue
             for sym in section.iter_symbols():
                 if sym.entry.st_info.type == "STT_FUNC" and sym.name:
-                    funcs.append({
-                        "name": sym.name,
-                        "addr": sym.entry.st_value & ~1,
-                        "size": sym.entry.st_size,
-                    })
+                    funcs.append(
+                        {
+                            "name": sym.name,
+                            "addr": sym.entry.st_value & ~1,
+                            "size": sym.entry.st_size,
+                        }
+                    )
     return sorted(funcs, key=lambda x: x["addr"])
 
 
@@ -106,7 +109,9 @@ def build_addr_to_src(elf_path):
 
 def disassemble_range(elf_path, objdump, start, end):
     cmd = [
-        objdump, "-d", "--no-show-raw-insn",
+        objdump,
+        "-d",
+        "--no-show-raw-insn",
         f"--start-address=0x{start:x}",
         f"--stop-address=0x{end:x}",
         elf_path,
@@ -125,13 +130,21 @@ def disassemble_range(elf_path, objdump, start, end):
         if m:
             addr = int(m.group(1), 16)
             if start <= addr < end:
-                instructions.append({"addr": addr, "raw": m.group(2).strip(), "mnem": m.group(3).strip()})
+                instructions.append(
+                    {
+                        "addr": addr,
+                        "raw": m.group(2).strip(),
+                        "mnem": m.group(3).strip(),
+                    }
+                )
         else:
             m2 = pat2.match(line)
             if m2:
                 addr = int(m2.group(1), 16)
                 if start <= addr < end:
-                    instructions.append({"addr": addr, "raw": "", "mnem": m2.group(2).strip()})
+                    instructions.append(
+                        {"addr": addr, "raw": "", "mnem": m2.group(2).strip()}
+                    )
     return instructions
 
 
@@ -145,7 +158,9 @@ def find_compile_command(compile_commands_path, source_file):
     source_abs = os.path.abspath(source_file)
     for entry in commands:
         entry_file = os.path.abspath(entry.get("file", ""))
-        if entry_file == source_abs or entry_file.endswith(os.path.basename(source_file)):
+        if entry_file == source_abs or entry_file.endswith(
+            os.path.basename(source_file)
+        ):
             return entry
     return None
 
@@ -178,6 +193,7 @@ def recompile_to_asm(source_content, compile_entry, func_name, objdump):
             cmd = list(arguments)
         elif command:
             import shlex
+
             cmd = shlex.split(command)
         else:
             return None, None, "No compile command found."
@@ -224,7 +240,11 @@ def recompile_to_asm(source_content, compile_entry, func_name, objdump):
             # fall back: disassemble whole object
             cmd2 = [objdump, "-d", elf_to_use]
             r2 = subprocess.run(cmd2, capture_output=True, text=True)
-            return None, None, f"Could not find function in output: {e}\n\nFull disassembly:\n{r2.stdout[:3000]}"
+            return (
+                None,
+                None,
+                f"Could not find function in output: {e}\n\nFull disassembly:\n{r2.stdout[:3000]}",
+            )
 
 
 # ── state shared with HTTP handler ───────────────────────────────────────────
@@ -236,7 +256,7 @@ class AppState:
         self.compile_commands = None
         self.instructions = []
         self.addr_to_src = {}
-        self.source_files = {}   # path → content
+        self.source_files = {}  # path → content
         self.error = None
 
 
@@ -303,9 +323,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def api_get_state(self):
-        addr_src_serializable = {
-            str(k): list(v) for k, v in STATE.addr_to_src.items()
-        }
+        addr_src_serializable = {str(k): list(v) for k, v in STATE.addr_to_src.items()}
         # collect unique source files referenced
         src_files = {}
         for addr, (fpath, _) in STATE.addr_to_src.items():
@@ -316,15 +334,17 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     src_files[fpath] = f"// Could not read: {fpath}"
 
-        self.send_json({
-            "elf": STATE.elf_path,
-            "func": STATE.func_name,
-            "instructions": STATE.instructions,
-            "addr_to_src": addr_src_serializable,
-            "source_files": src_files,
-            "error": STATE.error,
-            "has_compile_commands": STATE.compile_commands is not None,
-        })
+        self.send_json(
+            {
+                "elf": STATE.elf_path,
+                "func": STATE.func_name,
+                "instructions": STATE.instructions,
+                "addr_to_src": addr_src_serializable,
+                "source_files": src_files,
+                "error": STATE.error,
+                "has_compile_commands": STATE.compile_commands is not None,
+            }
+        )
 
     def api_list_functions(self):
         funcs = list_functions(STATE.elf_path)
@@ -361,11 +381,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "error": error})
         else:
             addr_src_serializable = {str(k): list(v) for k, v in addr_to_src.items()}
-            self.send_json({
-                "ok": True,
-                "instructions": instructions,
-                "addr_to_src": addr_src_serializable,
-            })
+            self.send_json(
+                {
+                    "ok": True,
+                    "instructions": instructions,
+                    "addr_to_src": addr_src_serializable,
+                }
+            )
 
 
 # ── HTML page (single-file app) ───────────────────────────────────────────────
@@ -959,8 +981,12 @@ def main():
     parser.add_argument("elf", help="Path to ELF file")
     parser.add_argument("function", help="Function name to explore")
     parser.add_argument("--objdump", help="objdump binary (auto-detected)")
-    parser.add_argument("--compile-commands", help="Path to compile_commands.json for live recompile")
-    parser.add_argument("--port", type=int, default=7777, help="Port to serve on (default: 7777)")
+    parser.add_argument(
+        "--compile-commands", help="Path to compile_commands.json for live recompile"
+    )
+    parser.add_argument(
+        "--port", type=int, default=7777, help="Port to serve on (default: 7777)"
+    )
     args = parser.parse_args()
 
     if not os.path.isfile(args.elf):

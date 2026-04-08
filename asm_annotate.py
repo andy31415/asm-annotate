@@ -39,10 +39,26 @@ log = logging.getLogger(__name__)
 
 # ── color palette for source line → asm mapping ─────────────────────────────
 PALETTE = [
-    "#ff6b6b", "#ffd93d", "#6bcb77", "#4d96ff", "#ff922b",
-    "#cc5de8", "#20c997", "#f783ac", "#74c0fc", "#a9e34b",
-    "#ff8787", "#ffe066", "#8ce99a", "#74c0fc", "#ffa94d",
-    "#da77f2", "#63e6be", "#faa2c1", "#a5d8ff", "#c0eb75",
+    "#ff6b6b",
+    "#ffd93d",
+    "#6bcb77",
+    "#4d96ff",
+    "#ff922b",
+    "#cc5de8",
+    "#20c997",
+    "#f783ac",
+    "#74c0fc",
+    "#a9e34b",
+    "#ff8787",
+    "#ffe066",
+    "#8ce99a",
+    "#74c0fc",
+    "#ffa94d",
+    "#da77f2",
+    "#63e6be",
+    "#faa2c1",
+    "#a5d8ff",
+    "#c0eb75",
 ]
 
 console = Console(highlight=False)
@@ -96,11 +112,13 @@ def list_functions(elf_path: str) -> list[tuple[str, int, int]]:
                 continue
             for sym in section.iter_symbols():
                 if sym.entry.st_info.type == "STT_FUNC" and sym.name:
-                    funcs.append((
-                        sym.name,
-                        sym.entry.st_value & ~1,
-                        sym.entry.st_size,
-                    ))
+                    funcs.append(
+                        (
+                            sym.name,
+                            sym.entry.st_value & ~1,
+                            sym.entry.st_size,
+                        )
+                    )
     return sorted(funcs, key=lambda x: x[1])
 
 
@@ -162,14 +180,18 @@ def disassemble_range(
     result = subprocess.run(cmd, capture_output=True, text=True)
     out_lines = result.stdout.splitlines()
 
-    log.debug("objdump exit code: %d  (%d lines of output)", result.returncode, len(out_lines))
+    log.debug(
+        "objdump exit code: %d  (%d lines of output)", result.returncode, len(out_lines)
+    )
     if result.stderr.strip():
         log.debug("objdump stderr: %s", result.stderr.strip()[:300])
     for ln in out_lines[:30]:
         log.debug("  %r", ln)
 
     if result.returncode != 0:
-        log.error("objdump failed (exit %d): %s", result.returncode, result.stderr[:500])
+        log.error(
+            "objdump failed (exit %d): %s", result.returncode, result.stderr[:500]
+        )
         return []
 
     instructions = []
@@ -202,7 +224,9 @@ def disassemble_range(
         if start <= addr < end:
             instructions.append((addr, raw, mnem))
 
-    log.debug("Instructions matched in range 0x%x–0x%x: %d", start, end, len(instructions))
+    log.debug(
+        "Instructions matched in range 0x%x–0x%x: %d", start, end, len(instructions)
+    )
     if not instructions:
         log.debug(
             "Zero instructions matched. Check that the address range appears in "
@@ -215,6 +239,7 @@ def disassemble_range(
 
 # ── source file reading ──────────────────────────────────────────────────────
 _source_cache: dict[str, list[str]] = {}
+
 
 def read_source_lines(path: str) -> list[str]:
     if path in _source_cache:
@@ -250,15 +275,19 @@ def render_annotated(
             src_lines_seen[key[0]].add(key[1])
 
     # ── header ──────────────────────────────────────────────────────────────
-    total_bytes = sum(len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in instructions if r)
+    total_bytes = sum(
+        len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in instructions if r
+    )
     console.print()
-    console.print(Panel(
-        f"[bold white]{func_name}[/]  "
-        f"[dim]·[/]  [cyan]{len(instructions)} instructions[/]  "
-        f"[dim]·[/]  [yellow]{total_bytes} bytes[/]",
-        style="bold blue",
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            f"[bold white]{func_name}[/]  "
+            f"[dim]·[/]  [cyan]{len(instructions)} instructions[/]  "
+            f"[dim]·[/]  [yellow]{total_bytes} bytes[/]",
+            style="bold blue",
+            expand=False,
+        )
+    )
     console.print()
 
     # ── main annotated listing ───────────────────────────────────────────────
@@ -306,7 +335,11 @@ def render_annotated(
     # ── stats ────────────────────────────────────────────────────────────────
     if show_stats:
         console.print()
-        table = Table(title="Source line → byte cost", show_header=True, header_style="bold magenta")
+        table = Table(
+            title="Source line → byte cost",
+            show_header=True,
+            header_style="bold magenta",
+        )
         table.add_column("File:Line", style="dim", no_wrap=True)
         table.add_column("Source", overflow="fold")
         table.add_column("Insns", justify="right")
@@ -321,18 +354,29 @@ def render_annotated(
         for key, insns in line_stats.items():
             src_file, src_line_no = key
             byte_count = sum(
-                len(bytes.fromhex(r.replace(" ", "")))
-                for _, r, _ in insns if r
+                len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in insns if r
             )
             src_lines = read_source_lines(src_file)
             src_text = ""
             if src_lines and 0 < src_line_no <= len(src_lines):
                 src_text = src_lines[src_line_no - 1].strip()[:60]
             parts_p = Path(src_file).parts
-            short_file = os.path.join("…", *parts_p[-2:]) if len(parts_p) > 2 else src_file
-            rows.append((byte_count, f"{short_file}:{src_line_no}", src_text, len(insns), byte_count))
+            short_file = (
+                os.path.join("…", *parts_p[-2:]) if len(parts_p) > 2 else src_file
+            )
+            rows.append(
+                (
+                    byte_count,
+                    f"{short_file}:{src_line_no}",
+                    src_text,
+                    len(insns),
+                    byte_count,
+                )
+            )
 
-        for _, file_line, src_text, n_insns, n_bytes in sorted(rows, key=lambda x: -x[0]):
+        for _, file_line, src_text, n_insns, n_bytes in sorted(
+            rows, key=lambda x: -x[0]
+        ):
             table.add_row(file_line, src_text, str(n_insns), str(n_bytes))
 
         console.print(table)
@@ -349,11 +393,21 @@ def main():
     )
     parser.add_argument("elf", help="Path to ELF file")
     parser.add_argument("function", nargs="?", help="Function name to disassemble")
-    parser.add_argument("--objdump", help="Path/name of objdump binary (auto-detected if omitted)")
-    parser.add_argument("--list", action="store_true", help="List all functions in the ELF")
-    parser.add_argument("--stats", action="store_true", help="Show per-source-line byte cost table")
-    parser.add_argument("--bytes", action="store_true", help="Show raw instruction bytes")
-    parser.add_argument("--no-dwarf", action="store_true", help="Skip DWARF source mapping")
+    parser.add_argument(
+        "--objdump", help="Path/name of objdump binary (auto-detected if omitted)"
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="List all functions in the ELF"
+    )
+    parser.add_argument(
+        "--stats", action="store_true", help="Show per-source-line byte cost table"
+    )
+    parser.add_argument(
+        "--bytes", action="store_true", help="Show raw instruction bytes"
+    )
+    parser.add_argument(
+        "--no-dwarf", action="store_true", help="Skip DWARF source mapping"
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -381,7 +435,9 @@ def main():
         return
 
     if not args.function:
-        parser.error("Provide a function name, or use --list to see available functions.")
+        parser.error(
+            "Provide a function name, or use --list to see available functions."
+        )
 
     # ── find objdump ─────────────────────────────────────────────────────────
     try:
