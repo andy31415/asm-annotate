@@ -270,23 +270,32 @@ def render_unified(
     show_bytes: bool,
 ) -> None:
     _render_header(func_name, groups)
+    shown_src_keys: set[tuple] = set()
 
     for group in groups:
-        # file header when file changes and source is readable (matches original)
-        if group.show_file_header and group.src_file and group.src_lines:
-            short = _short_path(group.src_file, 3)
-            lineno = (
-                f":{group.src_line_start}" if group.src_line_start is not None else ""
-            )
-            console.print(f"  [dim italic]{short}[/][dim]{lineno}[/]")
+        src_key = (group.src_file, group.src_line_start)
+        src_already_shown = group.src_file is not None and src_key in shown_src_keys
+        if group.src_lines and not src_already_shown:
+            shown_src_keys.add(src_key)
 
-        for i, src_text in enumerate(group.src_lines):
-            line_text = Text()
-            line_text.append("  ", style="dim")
-            marker = "▶ " if i == 0 else "  "
-            line_text.append(marker, style=f"bold {group.color}")
-            line_text.append(src_text, style=group.color)
-            console.print(line_text)
+        if not src_already_shown:
+            # file header when file changes and source is readable
+            if group.show_file_header and group.src_file and group.src_lines:
+                short = _short_path(group.src_file, 3)
+                lineno = (
+                    f":{group.src_line_start}"
+                    if group.src_line_start is not None
+                    else ""
+                )
+                console.print(f"  [dim italic]{short}[/][dim]{lineno}[/]")
+
+            for i, src_text in enumerate(group.src_lines):
+                line_text = Text()
+                line_text.append("  ", style="dim")
+                marker = "▶ " if i == 0 else "  "
+                line_text.append(marker, style=f"bold {group.color}")
+                line_text.append(src_text, style=group.color)
+                console.print(line_text)
 
         for addr, raw, mnem in group.instructions:
             asm_text = Text()
