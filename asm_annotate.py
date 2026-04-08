@@ -103,18 +103,36 @@ def render_annotated(
     show_bytes: bool,
     remappings: tuple[tuple[str, str], ...] = (),
 ) -> None:
-    # assign colors to (file, line) pairs
+    # assign colors to (file, line) pairs, preserving first-seen order
     color_map: dict[tuple[str, int], str] = {}
     color_idx = 0
-    src_lines_seen: dict[str, set[int]] = defaultdict(set)
 
     for addr, raw, mnem in instructions:
         key = addr_to_src.get(addr)
         if key and key not in color_map:
             color_map[key] = PALETTE[color_idx % len(PALETTE)]
             color_idx += 1
-        if key:
-            src_lines_seen[key[0]].add(key[1])
+
+    # pre-compute source display range for each key:
+    # show from key's line up to (but not including) the next reported line in
+    # the same file, so consecutive DWARF entries fill in the gap between them.
+    src_key_sequence: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for addr, _, _ in instructions:
+        key = addr_to_src.get(addr)
+        if key and key not in seen:
+            src_key_sequence.append(key)
+            seen.add(key)
+
+    src_display_end: dict[tuple[str, int], int] = {}
+    for i, key in enumerate(src_key_sequence):
+        file, line = key
+        if i + 1 < len(src_key_sequence):
+            next_file, next_line = src_key_sequence[i + 1]
+            end = next_line - 1 if next_file == file else line
+        else:
+            end = line
+        src_display_end[key] = end
 
     # ── header ──────────────────────────────────────────────────────────────
     total_bytes = sum(
@@ -140,12 +158,12 @@ def render_annotated(
         src_key = addr_to_src.get(addr)
         color = color_map.get(src_key, "#888888") if src_key else "#aaaaaa"
 
-        # emit source line when it changes
+        # emit source lines when the key changes
         if src_key and src_key != prev_src_key:
             src_file, src_line_no = src_key
+            end_line = src_display_end.get(src_key, src_line_no)
             src_lines = read_source_lines(src_file, remappings)
             if src_lines and 0 < src_line_no <= len(src_lines):
-                src_text = src_lines[src_line_no - 1].rstrip()
                 if src_file != prev_src_file:
                     short = src_file
                     parts = Path(src_file).parts
@@ -154,11 +172,14 @@ def render_annotated(
                     console.print(f"  [dim italic]{short}[/][dim]:{src_line_no}[/]")
                     prev_src_file = src_file
 
-                line_text = Text()
-                line_text.append("  ", style="dim")
-                line_text.append("▶ ", style=f"bold {color}")
-                line_text.append(src_text, style=color)
-                console.print(line_text)
+                for ln in range(src_line_no, min(end_line, len(src_lines)) + 1):
+                    src_text = src_lines[ln - 1].rstrip()
+                    line_text = Text()
+                    line_text.append("  ", style="dim")
+                    marker = "▶ " if ln == src_line_no else "  "
+                    line_text.append(marker, style=f"bold {color}")
+                    line_text.append(src_text, style=color)
+                    console.print(line_text)
             prev_src_key = src_key
 
         # asm line
