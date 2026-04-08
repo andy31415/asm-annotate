@@ -20,6 +20,7 @@ from pathlib import Path
 
 import click
 import coloredlogs
+from rich.cells import cell_len
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -307,7 +308,7 @@ def render_unified(
 
 
 # ── split renderer ────────────────────────────────────────────────────────────
-_SEP = " │ "
+_SEP = " | "
 
 
 def render_split(
@@ -325,7 +326,8 @@ def render_split(
     fit the column; asm gets the remaining terminal width.
     """
     _render_header(func_name, groups)
-    asm_width = max(10, console.size.width - src_width - len(_SEP))
+    asm_width = max(10, console.width - src_width - cell_len(_SEP))
+    shown_src_keys: set[tuple] = set()
 
     for group in groups:
         # file-change header spans both columns as a rule
@@ -333,19 +335,24 @@ def render_split(
             short = _short_path(group.src_file, 3)
             console.rule(f"[dim italic]{short}[/]", style="dim")
 
-        n_src = len(group.src_lines)
+        src_key = (group.src_file, group.src_line_start)
+        src_already_shown = group.src_file is not None and src_key in shown_src_keys
+        if group.src_lines and not src_already_shown:
+            shown_src_keys.add(src_key)
+
+        n_src = 0 if src_already_shown else len(group.src_lines)
         n_asm = len(group.instructions)
         n_rows = max(n_src, n_asm, 1)
 
         for row_i in range(n_rows):
-            # left: source line with line number
+            # left: source line with line number (suppressed for repeated keys)
             left = Text()
             if row_i < n_src and group.src_line_start is not None:
                 lineno = group.src_line_start + row_i
                 marker = "▶" if row_i == 0 else " "
                 left.append(f"{lineno:>4} ", style="dim")
                 left.append(f"{marker} ", style=f"bold {group.color}")
-                left.append(group.src_lines[row_i], style=group.color)
+                left.append(group.src_lines[row_i].expandtabs(4), style=group.color)
             left.truncate(src_width, overflow="ellipsis", pad=True)
 
             # right: asm instruction
