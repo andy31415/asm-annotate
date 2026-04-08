@@ -138,7 +138,7 @@ def render_annotated(
 
     for addr, raw, mnem in instructions:
         src_key = addr_to_src.get(addr)
-        color = color_map.get(src_key, "#888888") if src_key else "#555555"
+        color = color_map.get(src_key, "#888888") if src_key else "#aaaaaa"
 
         # emit source line when it changes
         if src_key and src_key != prev_src_key:
@@ -146,17 +146,18 @@ def render_annotated(
             src_lines = read_source_lines(src_file, remappings)
             if src_lines and 0 < src_line_no <= len(src_lines):
                 src_text = src_lines[src_line_no - 1].rstrip()
-                # show filename only when file changes
                 if src_file != prev_src_file:
                     short = src_file
                     parts = Path(src_file).parts
                     if len(parts) > 3:
                         short = os.path.join("…", *parts[-3:])
-                    console.print(f"  [dim italic]{short}[/]")
+                    console.print(f"  [dim italic]{short}[/][dim]:{src_line_no}[/]")
                     prev_src_file = src_file
+                else:
+                    console.print(f"  [dim]:{src_line_no}[/]")
 
                 line_text = Text()
-                line_text.append(f"  {src_line_no:>5}  ", style="dim")
+                line_text.append("  ", style="dim")
                 line_text.append("▶ ", style=f"bold {color}")
                 line_text.append(src_text, style=color)
                 console.print(line_text)
@@ -164,7 +165,7 @@ def render_annotated(
 
         # asm line
         asm_text = Text()
-        asm_text.append(f"    {addr:08x}  ", style="dim")
+        asm_text.append(f"    {addr:08x}  ", style="#333333")
         if show_bytes and raw:
             asm_text.append(f"{raw:<24}", style="dim cyan")
         parts = mnem.split(None, 1)
