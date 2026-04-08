@@ -31,16 +31,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from asm_core import (
-    apply_demangling,
-    build_addr_to_src,
-    demangle_batch,
-    disassemble_range,
-    find_objdump,
-    get_function_bounds,
-    list_functions,
-    pick_function,
-)
+from disasm import apply_demangling, demangle_batch, disassemble_range, find_objdump
+from elf import build_addr_to_src, get_function_bounds, list_functions
+from picker import pick_function
 
 log = logging.getLogger(__name__)
 

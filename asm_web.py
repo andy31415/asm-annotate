@@ -28,13 +28,8 @@ import urllib.parse
 
 import coloredlogs
 
-from asm_core import (
-    build_addr_to_src,
-    disassemble_range,
-    find_objdump,
-    get_function_bounds,
-    list_functions,
-)
+from disasm import disassemble_range, find_objdump
+from elf import build_addr_to_src, get_function_bounds, list_functions
 
 log = logging.getLogger(__name__)
 
