@@ -7,13 +7,7 @@ Two tools for understanding what your C/C++ source code costs in flash:
 
 Both work with your existing ELF file (built by GN/CMake/whatever). No changes to your build needed — just build with `-g` for source mapping.
 
----
-
-## Install dependencies
-
-```bash
-pip install rich pyelftools
-```
+Both scripts have a `uv` shebang — dependencies install automatically on first run. Just install [uv](https://docs.astral.sh/uv/) once, then run the scripts directly.
 
 ---
 
@@ -21,19 +15,28 @@ pip install rich pyelftools
 
 ```bash
 # List all functions in an ELF
-python asm_annotate.py firmware.elf --list
+./asm_annotate.py firmware.elf --list
 
 # Annotate a specific function (auto-detects arm-none-eabi-objdump or llvm-objdump)
-python asm_annotate.py firmware.elf my_function
+./asm_annotate.py firmware.elf my_function
+
+# Side-by-side source│asm layout (default, 50/50 columns)
+./asm_annotate.py firmware.elf my_function --format split
+
+# Split with a custom source column width
+./asm_annotate.py firmware.elf my_function --format split:60
+
+# Classic interleaved source+asm output
+./asm_annotate.py firmware.elf my_function --format unified
 
 # With byte cost table (shows which source lines cost the most flash)
-python asm_annotate.py firmware.elf my_function --stats
+./asm_annotate.py firmware.elf my_function --stats
 
 # Show raw instruction bytes too
-python asm_annotate.py firmware.elf my_function --bytes
+./asm_annotate.py firmware.elf my_function --bytes
 
 # Specify objdump explicitly
-python asm_annotate.py firmware.elf my_function --objdump arm-none-eabi-objdump
+./asm_annotate.py firmware.elf my_function --objdump arm-none-eabi-objdump
 ```
 
 ### What you get:
@@ -48,13 +51,13 @@ python asm_annotate.py firmware.elf my_function --objdump arm-none-eabi-objdump
 
 ```bash
 # Basic: read-only view (just needs the ELF)
-python asm_web.py firmware.elf my_function
+./asm_web.py firmware.elf my_function
 
 # With live recompile (needs compile_commands.json)
-python asm_web.py firmware.elf my_function --compile-commands build/compile_commands.json
+./asm_web.py firmware.elf my_function --compile-commands build/compile_commands.json
 
 # Custom port
-python asm_web.py firmware.elf my_function --port 8080
+./asm_web.py firmware.elf my_function --port 8080
 ```
 
 Then open **http://localhost:7777** in your browser.
