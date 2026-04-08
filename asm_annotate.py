@@ -15,6 +15,7 @@ asm_annotate.py — Colored source↔assembly annotator for ELF files.
 import logging
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import click
@@ -96,154 +97,280 @@ def read_source_lines(
         return []
 
 
-# ── rendering ────────────────────────────────────────────────────────────────
-def render_annotated(
-    func_name: str,
+# ── render data model ─────────────────────────────────────────────────────────
+@dataclass
+class RenderGroup:
+    """One source→asm group: a run of instructions sharing a source location."""
+
+    color: str
+    src_file: str | None  # None if no DWARF info for this group
+    src_line_start: int | None  # first source line number
+    src_lines: list[str]  # source text lines (empty when file not found)
+    instructions: list[tuple[int, str, str]]  # (addr, bytes_hex, mnemonic)
+    show_file_header: bool  # True when the source file changes from the previous group
+
+
+# ── build render groups ───────────────────────────────────────────────────────
+def build_groups(
     instructions: list[tuple[int, str, str]],
     addr_to_src: dict[int, tuple[str, int]],
-    show_stats: bool,
-    show_bytes: bool,
     remappings: tuple[tuple[str, str], ...] = (),
-) -> None:
-    # assign colors to (file, line) pairs, preserving first-seen order
+) -> list[RenderGroup]:
+    """Group consecutive instructions by DWARF source key and load source text."""
+    # assign colors in first-seen order
     color_map: dict[tuple[str, int], str] = {}
     color_idx = 0
-
-    for addr, raw, mnem in instructions:
+    for addr, _, _ in instructions:
         key = addr_to_src.get(addr)
         if key and key not in color_map:
             color_map[key] = PALETTE[color_idx % len(PALETTE)]
             color_idx += 1
 
-    # pre-compute source display range for each key:
-    # show from key's line up to (but not including) the next reported line in
-    # the same file, so consecutive DWARF entries fill in the gap between them.
-    src_key_sequence: list[tuple[str, int]] = []
+    # compute how many source lines each key covers (fill gap to next key in
+    # the same file, so consecutive DWARF entries show the lines between them)
+    src_key_seq: list[tuple[str, int]] = []
     seen: set[tuple[str, int]] = set()
     for addr, _, _ in instructions:
         key = addr_to_src.get(addr)
         if key and key not in seen:
-            src_key_sequence.append(key)
+            src_key_seq.append(key)
             seen.add(key)
 
     src_display_end: dict[tuple[str, int], int] = {}
-    for i, key in enumerate(src_key_sequence):
+    for i, key in enumerate(src_key_seq):
         file, line = key
-        if i + 1 < len(src_key_sequence):
-            next_file, next_line = src_key_sequence[i + 1]
+        if i + 1 < len(src_key_seq):
+            next_file, next_line = src_key_seq[i + 1]
             end = next_line - 1 if next_file == file else line
         else:
             end = line
         src_display_end[key] = end
 
-    # ── header ──────────────────────────────────────────────────────────────
-    total_bytes = sum(
+    # build groups: start a new group on every source-key change
+    groups: list[RenderGroup] = []
+    prev_src_key: tuple[str, int] | None = None
+    prev_src_file: str | None = None
+    current: RenderGroup | None = None
+
+    for addr, raw, mnem in instructions:
+        src_key = addr_to_src.get(addr)
+
+        if src_key != prev_src_key:
+            if current is not None:
+                groups.append(current)
+
+            color = color_map.get(src_key, "#888888") if src_key else "#aaaaaa"
+
+            if src_key:
+                src_file, src_line_no = src_key
+                end_line = src_display_end.get(src_key, src_line_no)
+                raw_lines = read_source_lines(src_file, remappings)
+                src_lines: list[str] = []
+                if raw_lines and 0 < src_line_no <= len(raw_lines):
+                    for ln in range(src_line_no, min(end_line, len(raw_lines)) + 1):
+                        src_lines.append(raw_lines[ln - 1].rstrip())
+                show_file = src_file != prev_src_file
+                prev_src_file = src_file
+                current = RenderGroup(
+                    color=color,
+                    src_file=src_file,
+                    src_line_start=src_line_no,
+                    src_lines=src_lines,
+                    instructions=[],
+                    show_file_header=show_file,
+                )
+            else:
+                current = RenderGroup(
+                    color=color,
+                    src_file=None,
+                    src_line_start=None,
+                    src_lines=[],
+                    instructions=[],
+                    show_file_header=False,
+                )
+            prev_src_key = src_key
+
+        current.instructions.append((addr, raw, mnem))  # type: ignore[union-attr]
+
+    if current is not None:
+        groups.append(current)
+
+    return groups
+
+
+# ── shared helpers ────────────────────────────────────────────────────────────
+def _count_bytes(instructions: list[tuple[int, str, str]]) -> int:
+    return sum(
         len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in instructions if r
     )
+
+
+def _short_path(path: str, depth: int = 3) -> str:
+    parts = Path(path).parts
+    return os.path.join("…", *parts[-depth:]) if len(parts) > depth else path
+
+
+def _render_header(func_name: str, groups: list[RenderGroup]) -> None:
+    all_insns = [i for g in groups for i in g.instructions]
+    total = _count_bytes(all_insns)
     console.print()
     console.print(
         Panel(
             f"[bold white]{func_name}[/]  "
-            f"[dim]·[/]  [cyan]{len(instructions)} instructions[/]  "
-            f"[dim]·[/]  [yellow]{total_bytes} bytes[/]",
+            f"[dim]·[/]  [cyan]{len(all_insns)} instructions[/]  "
+            f"[dim]·[/]  [yellow]{total} bytes[/]",
             style="bold blue",
             expand=False,
         )
     )
     console.print()
 
-    # ── main annotated listing ───────────────────────────────────────────────
-    prev_src_key = None
-    prev_src_file = None
 
-    for addr, raw, mnem in instructions:
-        src_key = addr_to_src.get(addr)
-        color = color_map.get(src_key, "#888888") if src_key else "#aaaaaa"
+def _render_stats_table(groups: list[RenderGroup]) -> None:
+    table = Table(
+        title="Source line → byte cost",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("File:Line", style="dim", no_wrap=True)
+    table.add_column("Source", overflow="fold")
+    table.add_column("Insns", justify="right")
+    table.add_column("Bytes", justify="right", style="yellow")
 
-        # emit source lines when the key changes
-        if src_key and src_key != prev_src_key:
-            src_file, src_line_no = src_key
-            end_line = src_display_end.get(src_key, src_line_no)
-            src_lines = read_source_lines(src_file, remappings)
-            if src_lines and 0 < src_line_no <= len(src_lines):
-                if src_file != prev_src_file:
-                    short = src_file
-                    parts = Path(src_file).parts
-                    if len(parts) > 3:
-                        short = os.path.join("…", *parts[-3:])
-                    console.print(f"  [dim italic]{short}[/][dim]:{src_line_no}[/]")
-                    prev_src_file = src_file
+    # aggregate by (file, line) to handle non-consecutive same-key groups
+    key_insns: dict[tuple, list] = defaultdict(list)
+    key_meta: dict[tuple, tuple[str, str]] = {}
+    for group in groups:
+        key = (group.src_file or "??", group.src_line_start or 0)
+        key_insns[key].extend(group.instructions)
+        if key not in key_meta:
+            src_text = group.src_lines[0].strip()[:60] if group.src_lines else ""
+            if group.src_file and group.src_line_start is not None:
+                file_line = f"{_short_path(group.src_file, 2)}:{group.src_line_start}"
+            else:
+                file_line = "??"
+            key_meta[key] = (file_line, src_text)
 
-                for ln in range(src_line_no, min(end_line, len(src_lines)) + 1):
-                    src_text = src_lines[ln - 1].rstrip()
-                    line_text = Text()
-                    line_text.append("  ", style="dim")
-                    marker = "▶ " if ln == src_line_no else "  "
-                    line_text.append(marker, style=f"bold {color}")
-                    line_text.append(src_text, style=color)
-                    console.print(line_text)
-            prev_src_key = src_key
+    rows = []
+    for key, insns in key_insns.items():
+        n_bytes = _count_bytes(insns)
+        file_line, src_text = key_meta[key]
+        rows.append((n_bytes, file_line, src_text, len(insns), n_bytes))
 
-        # asm line
-        asm_text = Text()
-        asm_text.append(f"    {addr:08x}  ", style="#333333")
-        if show_bytes and raw:
-            asm_text.append(f"{raw:<24}", style="dim cyan")
-        parts = mnem.split(None, 1)
-        mnem_word = parts[0]
-        operands = parts[1] if len(parts) > 1 else ""
-        asm_text.append(f"  {mnem_word:<10}", style=f"bold {color}")
-        asm_text.append(operands, style=color)
-        console.print(asm_text)
+    for _, file_line, src_text, n_insns, n_bytes in sorted(rows, key=lambda x: -x[0]):
+        table.add_row(file_line, src_text, str(n_insns), str(n_bytes))
 
-    # ── stats ────────────────────────────────────────────────────────────────
+    console.print(table)
+
+
+# ── unified renderer ─────────────────────────────────────────────────────────
+def render_unified(
+    func_name: str,
+    groups: list[RenderGroup],
+    show_stats: bool,
+    show_bytes: bool,
+) -> None:
+    _render_header(func_name, groups)
+
+    for group in groups:
+        # file header when file changes and source is readable (matches original)
+        if group.show_file_header and group.src_file and group.src_lines:
+            short = _short_path(group.src_file, 3)
+            lineno = f":{group.src_line_start}" if group.src_line_start is not None else ""
+            console.print(f"  [dim italic]{short}[/][dim]{lineno}[/]")
+
+        for i, src_text in enumerate(group.src_lines):
+            line_text = Text()
+            line_text.append("  ", style="dim")
+            marker = "▶ " if i == 0 else "  "
+            line_text.append(marker, style=f"bold {group.color}")
+            line_text.append(src_text, style=group.color)
+            console.print(line_text)
+
+        for addr, raw, mnem in group.instructions:
+            asm_text = Text()
+            asm_text.append(f"    {addr:08x}  ", style="#333333")
+            if show_bytes and raw:
+                asm_text.append(f"{raw:<24}", style="dim cyan")
+            parts = mnem.split(None, 1)
+            mnem_word = parts[0]
+            operands = parts[1] if len(parts) > 1 else ""
+            asm_text.append(f"  {mnem_word:<10}", style=f"bold {group.color}")
+            asm_text.append(operands, style=group.color)
+            console.print(asm_text)
+
     if show_stats:
         console.print()
-        table = Table(
-            title="Source line → byte cost",
-            show_header=True,
-            header_style="bold magenta",
-        )
-        table.add_column("File:Line", style="dim", no_wrap=True)
-        table.add_column("Source", overflow="fold")
-        table.add_column("Insns", justify="right")
-        table.add_column("Bytes", justify="right", style="yellow")
+        _render_stats_table(groups)
 
-        line_stats: dict[tuple, list] = defaultdict(list)
-        for addr, raw, mnem in instructions:
-            key = addr_to_src.get(addr, ("??", 0))
-            line_stats[key].append((addr, raw, mnem))
+    console.print()
 
-        rows = []
-        for key, insns in line_stats.items():
-            src_file, src_line_no = key
-            byte_count = sum(
-                len(bytes.fromhex(r.replace(" ", ""))) for _, r, _ in insns if r
-            )
-            src_lines = read_source_lines(src_file, remappings)
-            src_text = ""
-            if src_lines and 0 < src_line_no <= len(src_lines):
-                src_text = src_lines[src_line_no - 1].strip()[:60]
-            parts_p = Path(src_file).parts
-            short_file = (
-                os.path.join("…", *parts_p[-2:]) if len(parts_p) > 2 else src_file
-            )
-            rows.append(
-                (
-                    byte_count,
-                    f"{short_file}:{src_line_no}",
-                    src_text,
-                    len(insns),
-                    byte_count,
-                )
-            )
 
-        for _, file_line, src_text, n_insns, n_bytes in sorted(
-            rows, key=lambda x: -x[0]
-        ):
-            table.add_row(file_line, src_text, str(n_insns), str(n_bytes))
+# ── split renderer ────────────────────────────────────────────────────────────
+_SEP = " │ "
 
-        console.print(table)
+
+def render_split(
+    func_name: str,
+    groups: list[RenderGroup],
+    show_stats: bool,
+    show_bytes: bool,
+    src_width: int,
+) -> None:
+    """Side-by-side source (left) and assembly (right) columns.
+
+    Each source→asm group is laid out as rows: source lines on the left,
+    asm instructions on the right.  Whichever side is taller gets blank
+    cells on the shorter side.  Source lines are truncated (with «…») to
+    fit the column; asm gets the remaining terminal width.
+    """
+    _render_header(func_name, groups)
+    asm_width = max(10, console.size.width - src_width - len(_SEP))
+
+    for group in groups:
+        # file-change header spans both columns as a rule
+        if group.show_file_header and group.src_file:
+            short = _short_path(group.src_file, 3)
+            console.rule(f"[dim italic]{short}[/]", style="dim")
+
+        n_src = len(group.src_lines)
+        n_asm = len(group.instructions)
+        n_rows = max(n_src, n_asm, 1)
+
+        for row_i in range(n_rows):
+            # left: source line with line number
+            left = Text()
+            if row_i < n_src and group.src_line_start is not None:
+                lineno = group.src_line_start + row_i
+                marker = "▶" if row_i == 0 else " "
+                left.append(f"{lineno:>4} ", style="dim")
+                left.append(f"{marker} ", style=f"bold {group.color}")
+                left.append(group.src_lines[row_i], style=group.color)
+            left.truncate(src_width, overflow="ellipsis", pad=True)
+
+            # right: asm instruction
+            right = Text()
+            if row_i < n_asm:
+                addr, raw, mnem = group.instructions[row_i]
+                right.append(f"{addr:08x}  ", style="#444444")
+                if show_bytes and raw:
+                    right.append(f"{raw:<24}", style="dim cyan")
+                mnem_parts = mnem.split(None, 1)
+                mnem_word = mnem_parts[0]
+                operands = mnem_parts[1] if len(mnem_parts) > 1 else ""
+                right.append(f"{mnem_word:<10}", style=f"bold {group.color}")
+                right.append(operands, style=group.color)
+            right.truncate(asm_width, overflow="ellipsis")
+
+            row = Text()
+            row.append_text(left)
+            row.append(_SEP, style="dim")
+            row.append_text(right)
+            console.print(row, crop=False)
+
+    if show_stats:
+        console.print()
+        _render_stats_table(groups)
 
     console.print()
 
@@ -279,6 +406,17 @@ def render_annotated(
     help="Remap a source path prefix. E.g. --remap /workspace /home/user/src  (repeatable)",
 )
 @click.option(
+    "--format",
+    "fmt",
+    default="split",
+    metavar="FORMAT",
+    help=(
+        "Output format: split (default, 50/50 columns), "
+        "unified (interleaved source+asm), "
+        "or split:<N> (split with N chars for source column)"
+    ),
+)
+@click.option(
     "--log-level",
     default="INFO",
     metavar="LEVEL",
@@ -295,6 +433,7 @@ def main(
     no_dwarf,
     no_demangle,
     remap,
+    fmt,
     log_level,
 ):
     coloredlogs.install(level=log_level.upper(), logger=log)
@@ -367,15 +506,29 @@ def main(
     if not no_demangle:
         func_name, instructions = apply_demangling(func_name, instructions)
 
+    # ── build groups ──────────────────────────────────────────────────────────
+    groups = build_groups(instructions, addr_to_src, remap)
+
     # ── render ───────────────────────────────────────────────────────────────
-    render_annotated(
-        func_name=func_name,
-        instructions=instructions,
-        addr_to_src=addr_to_src,
-        show_stats=stats,
-        show_bytes=show_bytes,
-        remappings=remap,
-    )
+    if fmt == "unified":
+        render_unified(func_name, groups, stats, show_bytes)
+    elif fmt == "split" or fmt.startswith("split:"):
+        if ":" in fmt:
+            try:
+                src_width = int(fmt.split(":", 1)[1])
+            except ValueError:
+                raise click.BadParameter(
+                    f"invalid format '{fmt}': expected split:<integer>",
+                    param_hint="--format",
+                )
+        else:
+            src_width = max(20, console.size.width // 2 - 2)
+        render_split(func_name, groups, stats, show_bytes, src_width)
+    else:
+        raise click.BadParameter(
+            f"unknown format '{fmt}': use split, unified, or split:<N>",
+            param_hint="--format",
+        )
 
 
 main()

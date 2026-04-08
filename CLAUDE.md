@@ -29,7 +29,10 @@ Five files, two layers:
 - `picker.py` — resolves a partial/fuzzy function name query to an exact mangled symbol name. Falls through: exact match → single substring match → interactive `sk`/`fzf` picker.
 
 **Frontend entry points**:
-- `asm_annotate.py` — click CLI + rich terminal rendering. Assigns colors from `PALETTE` to `(file, line)` keys in first-seen order; emits interleaved source lines and asm.
+- `asm_annotate.py` — click CLI + rich terminal rendering. The render pipeline is:
+  1. `build_groups(instructions, addr_to_src, remappings) → list[RenderGroup]` — assigns colors from `PALETTE` in first-seen order, computes source line ranges, loads source text. Each `RenderGroup` holds `(color, src_file, src_line_start, src_lines, instructions, show_file_header)`.
+  2. `render_unified(func_name, groups, ...)` — classic interleaved source+asm output.
+  3. `render_split(func_name, groups, ..., src_width)` — side-by-side columns separated by `│`. Left column shows `{lineno} {marker} {source}` truncated to `src_width` chars; right column shows asm. File headers rendered as a full-width `Rule`. Use `--split` to enable; `--src-width N` overrides the default (half terminal width).
 - `asm_web.py` — stdlib `HTTPServer` serving a single-file HTML/JS app. All page HTML/CSS/JS is the `HTML_PAGE` string constant. The JS `PALETTE` is a copy of the Python one. `AppState` is a module-level singleton. API endpoints: `GET /api/state`, `GET /api/functions`, `POST /api/switch_function`, `POST /api/recompile`.
 
 ## External tool dependencies
