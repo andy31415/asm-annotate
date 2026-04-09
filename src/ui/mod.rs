@@ -1,12 +1,13 @@
 use crate::backends::disasm::Instruction;
 use crate::types::{DisplayItem, SourceLocation};
+use crate::source_reader::SourceReader;
 use colored::*;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
 
 pub trait Renderer {
-    fn render(&self, func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()>;
+    fn render(&self, func_name: &str, items: &[DisplayItem], source_reader: &SourceReader) -> color_eyre::Result<()>;
 }
 
 pub struct UnifiedRenderer {
@@ -14,7 +15,7 @@ pub struct UnifiedRenderer {
 }
 
 impl Renderer for UnifiedRenderer {
-    fn render(&self, func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
+    fn render(&self, func_name: &str, items: &[DisplayItem], _source_reader: &SourceReader) -> color_eyre::Result<()> {
         render_header(func_name, items)?;
 
         for item in items {
@@ -62,7 +63,7 @@ fn strip_ansi(s: &str) -> String {
 }
 
 impl Renderer for SplitRenderer {
-    fn render(&self, func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
+    fn render(&self, func_name: &str, items: &[DisplayItem], _source_reader: &SourceReader) -> color_eyre::Result<()> {
         render_header(func_name, items)?;
 
         let mut i = 0;
@@ -236,4 +237,137 @@ fn short_path(path_str: &str, depth: usize) -> String {
 // TODO: Implement render_stats_table
 pub fn render_stats_table() -> color_eyre::Result<()> {
     Ok(())
+}
+
+// New SideBySideRenderer
+pub struct SideBySideRenderer {
+    pub show_bytes: bool,
+    pub context_lines: usize,
+    pub source_width: usize,
+    pub asm_width: usize,
+}
+
+impl Renderer for SideBySideRenderer {
+    fn render(&self, func_name: &str, items: &[DisplayItem], source_reader: &SourceReader) -> color_eyre::Result<()> {
+        use std::collections::{BTreeMap, HashMap};
+        render_header(func_name, items)?;
+
+        let mut source_map: BTreeMap<String, BTreeMap<usize, ()>> = BTreeMap::new();
+        let mut file_line_color: HashMap<(String, usize), Color> = HashMap::new();
+
+        for item in items {
+            if let Some(ref src) = item.source {
+                source_map
+                    .entry(src.file.clone())
+                    .or_default()
+                    .insert(src.line, ());
+                file_line_color.entry((src.file.clone(), src.line)).or_insert(item.color);
+            }
+        }
+
+        let mut source_panel_lines: Vec<String> = Vec::new();
+
+        // --- Collect Source Lines ---
+        for (file, lines) in &source_map {
+            source_panel_lines.push(format!("-- {} --", short_path(file, 3).dimmed().italic()));
+
+            if lines.is_empty() {
+                continue;
+            }
+
+            let mut sorted_asm_lines: Vec<usize> = lines.keys().cloned().collect();
+            sorted_asm_lines.sort();
+
+            let mut ranges: Vec<(usize, usize)> = Vec::new();
+            let mut i = 0;
+            while i < sorted_asm_lines.len() {
+                let current_asm_line = sorted_asm_lines[i];
+                let start = std::cmp::max(1, current_asm_line.saturating_sub(self.context_lines));
+                let mut end = current_asm_line + self.context_lines;
+                let mut j = i + 1;
+                while j < sorted_asm_lines.len() {
+                    let next_asm_line = sorted_asm_lines[j];
+                    if std::cmp::max(1, next_asm_line.saturating_sub(self.context_lines)) <= end + 1 {
+                        end = next_asm_line + self.context_lines;
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                ranges.push((start, end));
+                i = j;
+            }
+
+            let mut last_printed_line: Option<usize> = None;
+            for (start, end) in ranges {
+                if let Some(last) = last_printed_line {
+                    if start > last + 1 {
+                        let line_num_str = format!("{:>4}:", "").dimmed();
+                        source_panel_lines.push(format!("{} ~", line_num_str));
+                    }
+                }
+
+                for l in start..=end {
+                    let color = file_line_color.get(&(file.clone(), l));
+                    let line_content = source_reader.read_line(file, l).unwrap_or(None).unwrap_or_else(|| "".to_string());
+                    let is_main = lines.contains_key(&l);
+
+                    let line_num_str = format!("{:>4}:", l);
+
+                    let styled_content = if is_main {
+                        let c = color.unwrap_or(&Color::White);
+                        format!("{} {} {}", line_num_str.color(*c).bold(), "▶".color(*c).bold(), line_content.color(*c))
+                    } else {
+                        format!("{}   {}", line_num_str.dimmed(), line_content.truecolor(100, 100, 100))
+                    };
+
+                    source_panel_lines.push(styled_content);
+                }
+                last_printed_line = Some(end);
+            }
+        }
+
+        // --- Collect Assembly Lines ---
+        let asm_panel_lines: Vec<String> = items
+            .iter()
+            .map(|item| format_asm_line(item, self.show_bytes, item.color, self.asm_width))
+            .collect();
+
+        // --- Render Side-by-Side ---
+        let max_len = std::cmp::max(source_panel_lines.len(), asm_panel_lines.len());
+        for i in 0..max_len {
+            let src_line = source_panel_lines.get(i).cloned().unwrap_or_default();
+            let asm_line = asm_panel_lines.get(i).cloned().unwrap_or_default();
+
+            // Truncate Source Line
+            let stripped_src = strip_ansi(&src_line);
+            let src_display = if stripped_src.width() > self.source_width {
+                let mut truncated = String::new();
+                let mut current_width = 0;
+                for char in src_line.chars() {
+                    let char_width = UnicodeWidthStr::width(char.encode_utf8(&mut [0u8; 4]));
+                    if current_width + char_width > self.source_width {
+                         if current_width + 1 <= self.source_width {
+                            truncated.push('…');
+                         }
+                        break;
+                    }
+                    truncated.push(char);
+                    current_width += char_width;
+                }
+                truncated
+            } else {
+                src_line
+            };
+
+            let src_width = strip_ansi(&src_display).width();
+            let padding = self.source_width.saturating_sub(src_width);
+
+            print!("{}", src_display);
+            print!("{}", " ".repeat(padding));
+            println!(" {} {}", "|".dimmed(), asm_line);
+        }
+
+        Ok(())
+    }
 }

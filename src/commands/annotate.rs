@@ -146,6 +146,13 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
             source_width,
             asm_width: 100, // TODO: Calculate from terminal width
         })
+    } else if args.format == "sidebyside" {
+        Box::new(crate::ui::SideBySideRenderer {
+            show_bytes: args.bytes,
+            context_lines: 5,
+            source_width: 80,
+            asm_width: 100, // TODO: Calculate from terminal width
+        })
     } else {
         // Default to split
         Box::new(SplitRenderer {
@@ -155,7 +162,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         })
     };
 
-    renderer.render(&final_func_name, &display_items)?;
+    renderer.render(&final_func_name, &display_items, &source_reader)?;
 
     Ok(())
 }

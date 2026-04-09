@@ -59,6 +59,12 @@ impl DisplayItem {
             Color::Blue,
             Color::Magenta,
             Color::Cyan,
+            Color::BrightRed,
+            Color::BrightGreen,
+            Color::BrightYellow,
+            Color::BrightBlue,
+            Color::BrightMagenta,
+            Color::BrightCyan,
         ];
 
         for ai in annotated_instructions {
