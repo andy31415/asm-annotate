@@ -75,9 +75,19 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         end_addr,
         end_addr - start_addr
     );
-
-    // TODO: Implement the rest of the annotation logic
     // 2. Get DWARF mapping
+    let addr_to_src = elf_backend
+        .build_addr_to_src(&args.elf)
+        .wrap_err("Failed to build address to source mapping")?;
+
+    info!("Address to source mapping: (showing max 5)");
+    for (addr, (file, line)) in addr_to_src.iter().take(5) {
+        println!("  {:#x}: {}:{}", addr, file, line);
+    }
+    if addr_to_src.len() > 5 {
+        println!("  ... and {} more entries", addr_to_src.len() - 5);
+    }
+
     // 3. Disassemble range
     // 4. Demangle names
     // 5. Build render groups

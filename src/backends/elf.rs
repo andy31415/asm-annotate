@@ -28,29 +28,6 @@ pub trait ElfBackend {
 
 pub struct GoblinElfBackend;
 
-trait AsDwarfString<'a> {
-    fn get_string(&'a self, dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>>;
-}
-
-impl<'a> AsDwarfString<'a> for EndianSlice<'a, RunTimeEndian> {
-    fn get_string(&'a self, _dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
-        // we assume this is already a string
-
-        // TODO: this does NOT work
-        //
-        // let rb = dwarf.string(self)?;
-        // Ok(rb.to_string_lossy())
-
-        unimplemented!()
-    }
-}
-
-impl<'a> AsDwarfString<'a> for AttributeValue<EndianSlice<'a, RunTimeEndian>, usize> {
-    fn get_string(&'a self, _dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
-        unimplemented!()
-    }
-}
-
 impl ElfBackend for GoblinElfBackend {
     fn list_functions(&self, elf_path: &Path) -> Result<Vec<FunctionInfo>> {
         let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
@@ -133,80 +110,107 @@ impl ElfBackend for GoblinElfBackend {
             RunTimeEndian::Big
         };
 
+        let load_section = |id: SectionId| -> Result<EndianSlice<RunTimeEndian>, gimli::Error> {
+            log::trace!("Loading section {:#?}", id);
+            let data = elf
+                .section_headers
+                .iter()
+                .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(id.name()))
+                .and_then(|sh| {
+                    buffer.get(sh.sh_offset as usize..(sh.sh_offset + sh.sh_size) as usize)
+                })
+                .unwrap_or(&[]);
+            Ok(EndianSlice::new(data, endian))
+        };
+
+        log::trace!("Loading dwarf...");
+        let dwarf: Dwarf<EndianSlice<RunTimeEndian>> = Dwarf::load(load_section)?;
+        log::trace!("Dwarf data loaded.");
+
         let mut mapping = HashMap::new();
 
-        // let load_section = |id: SectionId| -> Result<EndianSlice<RunTimeEndian>, gimli::Error> {
-        //     let data = elf
-        //         .section_headers
-        //         .iter()
-        //         .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(id.name()))
-        //         .and_then(|sh| {
-        //             buffer.get(sh.sh_offset as usize..(sh.sh_offset + sh.sh_size) as usize)
-        //         })
-        //         .unwrap_or(&[]);
-        //     Ok(EndianSlice::new(data, endian))
-        // };
-        //
-        // let dwarf: Dwarf<EndianSlice<RunTimeEndian>> = Dwarf::load(load_section)?;
-        //
-        // let mut iter = dwarf.units();
-        // while let Some(header) = iter.next()? {
-        //     let unit = dwarf.unit(header)?;
-        //     if let Some(program) = unit.line_program.clone() {
-        //         let header = program.header().clone();
-        //         let mut rows = program.rows();
-        //         while let Some((_, row)) = rows.next_row()? {
-        //             if row.end_sequence() {
-        //                 continue;
-        //             }
-        //
-        //             if let Some(file_entry) = header.file(row.file_index()) {
-        //                 let mut path = PathBuf::new();
-        //
-        //                 // Base directory (DW_AT_comp_dir)
-        //                 let mut base_dir = PathBuf::new();
-        //                 if let Some(comp_dir_offset) = unit.comp_dir {
-        //                     if let Ok(d) = comp_dir_offset.get_string(&dwarf) {
-        //                         base_dir.push(d.as_ref());
-        //                     }
-        //                 }
-        //
-        //                 // File directory from line program header
-        //                 let dir_index = file_entry.directory_index();
-        //                 if dir_index != 0 {
-        //                     if let Some(dir_offset) =
-        //                         header.include_directories().get(dir_index as usize - 1)
-        //                     {
-        //                         if let Ok(dir_str) = dir_offset.get_string(&dwarf) {
-        //                             let dir_path = Path::new(dir_str.as_ref());
-        //                             if dir_path.is_absolute() {
-        //                                 path = dir_path.to_path_buf();
-        //                             } else {
-        //                                 path = base_dir.join(dir_path);
-        //                             }
-        //                         }
-        //                     }
-        //                 } else {
-        //                     path = base_dir;
-        //                 }
-        //
-        //                 // File name from line program header
-        //                 if let Ok(file_name) = file_entry.path_name().get_string(&dwarf) {
-        //                     path.push(file_name.as_ref());
-        //                 }
-        //
-        //                 if !path.as_os_str().is_empty() {
-        //                     if let Some(line) = row.line() {
-        //                         mapping.insert(
-        //                             row.address(),
-        //                             (path.to_string_lossy().into_owned(), line.get() as usize),
-        //                         );
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
+        let mut iter = dwarf.units();
+        while let Some(header) = iter.next()? {
+            let unit = dwarf.unit(header)?;
+            let program = unit.line_program;
+
+            if program.is_none() {
+                continue;
+            }
+
+            // we checked none above
+            let program = program.unwrap();
+            // log::trace!("PROGRAM: {:#?}", program);
+
+            let header = program.header().clone();
+            let mut rows = program.rows();
+
+            while let Some((_x, row)) = rows.next_row()? {
+                if row.end_sequence() {
+                    continue;
+                }
+
+                let line = row.line();
+                if line.is_none() {
+                    continue;
+                }
+                let line = line.unwrap();
+
+                let file_entry = header.file(row.file_index());
+                if file_entry.is_none() {
+                    continue;
+                }
+
+                let file_entry = file_entry.unwrap();
+                let mut path = PathBuf::new();
+
+                // Base directory (DW_AT_comp_dir)
+                let mut base_dir = PathBuf::new();
+                if let Some(comp_dir_offset) = unit.comp_dir {
+                    base_dir.push(String::from_utf8_lossy(comp_dir_offset.slice()).as_ref());
+                    log::trace!("HAVE base dir: {:#?}", base_dir);
+                }
+
+                // File directory from line program header
+                let dir_index = file_entry.directory_index();
+                if dir_index != 0 {
+                    if let Some(dir_offset) =
+                        header.include_directories().get(dir_index as usize - 1)
+                    {
+                        if let AttributeValue::String(slice) = dir_offset {
+                            let path_str = String::from_utf8_lossy(slice.slice());
+                            log::trace!("HAVE DIR OFFSET: {:#?}", path_str);
+                            let dir_path = Path::new(path_str.as_ref());
+                            if dir_path.is_absolute() {
+                                path.clear();
+                                path.push(dir_path);
+                            } else {
+                                path = base_dir.join(dir_path);
+                            }
+                        }
+                    }
+                } else {
+                    path = base_dir;
+                }
+
+                // File name from line program header
+                if let AttributeValue::String(slice) = file_entry.path_name() {
+                    let path_str = String::from_utf8_lossy(slice.slice());
+                    log::trace!("FILE PATH NAME: {:#?}", path_str);
+                    path.push(path_str.as_ref());
+                }
+
+                if path.as_os_str().is_empty() {
+                    continue;
+                }
+
+                log::debug!("FOUND {:#?}:{:#}", path, line);
+                mapping.insert(
+                    row.address(),
+                    (path.to_string_lossy().into_owned(), line.get() as usize),
+                );
+            }
+        }
 
         if mapping.is_empty() {
             log::warn!("No DWARF line information was found. Build with -g to get source mapping.");
