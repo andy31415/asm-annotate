@@ -74,7 +74,7 @@ fn try_disassemble(
         };
 
         let bytes = parts[1].trim();
-        let mnemonic = parts[2].trim();
+        let mnemonic = parts[2..].join(" ").trim().to_string();
 
         instructions.push(Instruction {
             address: addr,

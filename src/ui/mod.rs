@@ -175,21 +175,14 @@ fn format_asm_line(item: &DisplayItem, show_bytes: bool, color: Color) -> String
     } else {
         "".to_string()
     };
-    let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
-    let mnem_word = parts.first().unwrap_or(&"");
-    let operands = parts.get(1).unwrap_or(&"");
-
     format!(
-        "    {:08x}  {}{:<8}{}{}",
+        "    {:08x}  {}{}{}",
         inst.address,
         bytes_str.cyan().dimmed(),
-        mnem_word.color(color).bold(),
-        operands.color(color),
+        inst.mnemonic.color(color).bold(),
         "".white() // Reset color
     )
 }
-
-// Helper to render the function header
 fn render_header(func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
     let total_insns = items.len();
     let total_bytes = items
