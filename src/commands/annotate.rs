@@ -1,15 +1,16 @@
-use crate::cli::AnnotateArgs;
-use crate::backends::elf::{ElfBackend, GoblinElfBackend, FunctionInfo};
+use crate::backends::demangle::{CppDemangleBackend, DemanglerBackend};
+use crate::backends::elf::{ElfBackend, FunctionInfo, GoblinElfBackend};
 use crate::backends::picker::{PickerBackend, SkimBackend};
-use crate::backends::demangle::{DemanglerBackend, CppDemangleBackend};
-use color_eyre::eyre::{Result, Context, eyre};
+use crate::cli::AnnotateArgs;
+use color_eyre::eyre::{eyre, Context, Result};
 use log::info;
 
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let elf_backend = GoblinElfBackend;
     let demangler_backend = CppDemangleBackend;
 
-    let functions = elf_backend.list_functions(&args.elf)
+    let functions = elf_backend
+        .list_functions(&args.elf)
         .wrap_err("Failed to list functions")?;
 
     if functions.is_empty() {
@@ -18,7 +19,11 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
 
     let function_name = match &args.function {
         Some(name) => name,
-        None => return Err(eyre!("Function name not provided. Use --list to see available functions.")),
+        None => {
+            return Err(eyre!(
+                "Function name not provided. Use --list to see available functions."
+            ))
+        }
     };
 
     let mut matched_functions: Vec<FunctionInfo> = functions
@@ -30,28 +35,48 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         0 => {
             return Err(eyre!("No function found matching '{}'.", function_name));
         }
-        1 => {
-            matched_functions.pop().unwrap()
-        }
+        1 => matched_functions.pop().unwrap(),
         _ => {
-            info!("Multiple functions match '{}'. Please choose one:", function_name);
+            info!(
+                "Multiple functions match '{}'. Please choose one:",
+                function_name
+            );
             let picker_backend = SkimBackend;
-            picker_backend.pick_function(matched_functions, &demangler_backend)?
+            picker_backend
+                .pick_function(matched_functions, &demangler_backend)?
                 .ok_or_else(|| eyre!("No function selected from picker."))?
         }
     };
 
     // Demangle the selected function name for display if not already done
     let display_name = if !args.no_demangle {
-        demangler_backend.demangle(&selected_function.name).unwrap_or_else(|_| selected_function.name.clone())
+        demangler_backend
+            .demangle(&selected_function.name)
+            .unwrap_or_else(|_| selected_function.name.clone())
     } else {
         selected_function.name.clone()
     };
 
-    info!("Selected function: {} at {:#x}", display_name, selected_function.addr);
+    info!(
+        "Selected function: {} at {:#x}",
+        display_name, selected_function.addr
+    );
+
+    let (start_addr, end_addr) = elf_backend
+        .get_function_bounds(&args.elf, &selected_function.name)
+        .wrap_err(format!(
+            "Failed to get bounds for function {}",
+            selected_function.name
+        ))?;
+
+    info!(
+        "Function range: {:#x} - {:#x} ({} bytes)",
+        start_addr,
+        end_addr,
+        end_addr - start_addr
+    );
 
     // TODO: Implement the rest of the annotation logic
-    // 1. Get function bounds
     // 2. Get DWARF mapping
     // 3. Disassemble range
     // 4. Demangle names

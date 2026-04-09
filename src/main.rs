@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use clap::Parser;
 use color_eyre::eyre::{self, Context, Result};
 use env_logger::Env;
