@@ -325,10 +325,11 @@ impl Renderer for SideBySideRenderer {
             let mut last_printed_line: Option<usize> = None;
             for (start, end) in ranges {
                 if let Some(last) = last_printed_line
-                    && start > last + 1 {
-                        let line_num_str = format!("{:>4}:", "").dimmed();
-                        source_panel_lines.push(format!("{} ~", line_num_str));
-                    }
+                    && start > last + 1
+                {
+                    let line_num_str = format!("{:>4}:", "").dimmed();
+                    source_panel_lines.push(format!("{} ~", line_num_str));
+                }
 
                 for l in start..=end {
                     let color = file_line_color.get(&(file.clone(), l));
