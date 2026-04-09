@@ -7,7 +7,7 @@ use log::{debug, info};
 mod backends;
 mod cli;
 mod commands;
-mod core;
+mod types;
 mod ui;
 
 use cli::Cli;

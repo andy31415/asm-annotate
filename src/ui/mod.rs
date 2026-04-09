@@ -1,65 +1,54 @@
-use crate::core::RenderGroup;
+use crate::types::DisplayItem;
+use crate::backends::disasm::Instruction;
 use colored::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::collections::HashSet;
 
 // Basic unified renderer
 pub fn render_unified(
     func_name: &str,
-    groups: &[RenderGroup],
+    items: &[DisplayItem],
     show_bytes: bool,
 ) -> color_eyre::Result<()> {
-    render_header(func_name, groups)?;
-    let mut shown_src_keys: std::collections::HashSet<(Option<String>, Option<usize>)> =
-        std::collections::HashSet::new();
+    render_header(func_name, items)?;
 
-    for group in groups {
-        let src_key = (group.src_file.clone(), group.src_line_start);
-        let src_already_shown = group.src_file.is_some() && shown_src_keys.contains(&src_key);
-
-        if !group.src_lines.is_empty() && !src_already_shown {
-            shown_src_keys.insert(src_key);
-        }
-
-        if !src_already_shown {
-            if group.show_file_header && group.src_file.is_some() && !group.src_lines.is_empty() {
-                let short = short_path(group.src_file.as_ref().unwrap(), 3);
-                let lineno = group
-                    .src_line_start
-                    .map(|l| format!(":{}", l))
-                    .unwrap_or_else(String::new);
-                println!("  {}", format!("{}{}", short, lineno).dimmed().italic());
+    for item in items {
+        if item.is_new_line {
+            if item.is_new_file {
+                if let Some(ref src) = item.source {
+                    let short = short_path(&src.file, 3);
+                    println!("  {}", format!("{}:{}", short, src.line).dimmed().italic());
+                }
             }
-
-            for (i, src_text) in group.src_lines.iter().enumerate() {
-                let marker = if i == 0 { "▶ " } else { "  " };
+            if let Some(ref text) = item.source_text {
+                let marker = "▶ ";
                 println!(
                     "  {}{}{}",
-                    marker.color(group.color.as_str()).bold(),
-                    src_text.color(group.color.as_str()),
+                    marker.color(item.color).bold(),
+                    text.color(item.color),
                     "".white() // Reset color
                 );
             }
         }
 
-        for inst in &group.instructions {
-            let bytes_str = if show_bytes && !inst.bytes.is_empty() {
-                format!("{:<24}  ", inst.bytes)
-            } else {
-                "".to_string()
-            };
-            let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
-            let mnem_word = parts.first().unwrap_or(&"");
-            let operands = parts.get(1).unwrap_or(&"");
+        let inst = &item.instruction;
+        let bytes_str = if show_bytes && !inst.bytes.is_empty() {
+            format!("{:<24}  ", inst.bytes)
+        } else {
+            "".to_string()
+        };
+        let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
+        let mnem_word = parts.first().unwrap_or(&"");
+        let operands = parts.get(1).unwrap_or(&"");
 
-            println!(
-                "    {:08x}  {}{:<10}{}{}",
-                inst.address,
-                bytes_str.cyan().dimmed(),
-                mnem_word.color(group.color.as_str()).bold(),
-                operands.color(group.color.as_str()),
-                "".white() // Reset color
-            );
-        }
+        println!(
+            "    {:08x}  {}{:<10}{}{}",
+            inst.address,
+            bytes_str.cyan().dimmed(),
+            mnem_word.color(item.color).bold(),
+            operands.color(item.color),
+            "".white() // Reset color
+        );
     }
 
     // TODO: Add render_stats_table if stats are enabled
@@ -68,12 +57,11 @@ pub fn render_unified(
 }
 
 // Helper to render the function header
-fn render_header(func_name: &str, groups: &[RenderGroup]) -> color_eyre::Result<()> {
-    let all_insns: Vec<&crate::backends::disasm::Instruction> =
-        groups.iter().flat_map(|g| &g.instructions).collect();
-    let total_bytes = all_insns
+fn render_header(func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
+    let total_insns = items.len();
+    let total_bytes = items
         .iter()
-        .map(|i| i.bytes.replace(" ", "").len() / 2)
+        .map(|i| i.instruction.bytes.replace(" ", "").len() / 2)
         .sum::<usize>();
 
     println!();
@@ -81,7 +69,7 @@ fn render_header(func_name: &str, groups: &[RenderGroup]) -> color_eyre::Result<
         " {} {} {} {} {}",
         func_name.white().bold(),
         "·".dimmed(),
-        format!("{} instructions", all_insns.len()).cyan(),
+        format!("{} instructions", total_insns).cyan(),
         "·".dimmed(),
         format!("{} bytes", total_bytes).yellow()
     );
@@ -105,14 +93,12 @@ fn short_path(path_str: &str, depth: usize) -> String {
     }
 }
 
-use std::path::PathBuf;
-
 // TODO: Implement render_split
 pub fn render_split() -> color_eyre::Result<()> {
     Ok(())
 }
 
 // TODO: Implement render_stats_table
-pub fn render_stats_table(_groups: &[RenderGroup]) -> color_eyre::Result<()> {
+pub fn render_stats_table() -> color_eyre::Result<()> {
     Ok(())
 }

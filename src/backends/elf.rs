@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use crate::core::SourceLocation;
+use crate::types::SourceLocation;
 use color_eyre::eyre::{Context, Result};
 use goblin::elf;
 use log;

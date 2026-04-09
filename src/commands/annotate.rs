@@ -2,7 +2,8 @@ use crate::backends::demangle::{CppDemangleBackend, DemanglerBackend};
 use crate::backends::elf::{ElfBackend, FunctionInfo, GoblinElfBackend};
 use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::AnnotateArgs;
-use color_eyre::eyre::{Context, Result, eyre};
+use crate::types::{AnnotatedInstruction, DisplayItem};
+use color_eyre::eyre::{eyre, Context, Result};
 use log::info;
 
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
@@ -59,7 +60,8 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
 
     info!(
         "Selected function: {} at {:#x}",
-        display_name, selected_function.addr
+        display_name,
+        selected_function.addr
     );
 
     let (start_addr, end_addr) = elf_backend
@@ -89,7 +91,6 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     }
 
     // 3. Disassemble range
-    let _objdump_bin = "objdump"; // Simplified for now
     let mut instructions = crate::backends::disasm::disassemble_range(
         &args.elf,
         args.objdump.as_deref(),
@@ -116,11 +117,14 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         selected_function.name.clone()
     };
 
-    // 5. Build render groups
-    let groups = crate::core::build_groups(&instructions, &addr_to_src)?;
+    // 5. Create AnnotatedInstructions
+    let annotated_instructions = AnnotatedInstruction::from_many(&instructions, &addr_to_src);
 
-    // 6. Render output
-    crate::ui::render_unified(&final_func_name, &groups, args.bytes)?;
+    // 6. Prepare for Display
+    let display_items = DisplayItem::from_annotated(&annotated_instructions)?;
+
+    // 7. Render output
+    crate::ui::render_unified(&final_func_name, &display_items, args.bytes)?;
 
     Ok(())
 }
