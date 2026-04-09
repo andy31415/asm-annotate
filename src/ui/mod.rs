@@ -1,8 +1,8 @@
 use crate::backends::disasm::Instruction;
 use crate::types::{DisplayItem, SourceLocation};
 use colored::*;
-use std::path::{Path, PathBuf};
 use regex::Regex;
+use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
 
 pub trait Renderer {
@@ -19,12 +19,14 @@ impl Renderer for UnifiedRenderer {
 
         for item in items {
             if item.is_new_line {
-                if item.is_new_file {
-                    if let Some(ref src) = item.source {
+                if item.is_new_file
+                    && let Some(ref src) = item.source {
                         let short = short_path(&src.file, 3);
-                        println!("  {}", format!("<{}:{}>", short, src.line).dimmed().italic());
+                        println!(
+                            "  {}",
+                            format!("<{}:{}>", short, src.line).dimmed().italic()
+                        );
                     }
-                }
                 if let Some(ref text) = item.source_text {
                     let marker = "▶ ";
                     println!(
@@ -69,8 +71,11 @@ impl Renderer for SplitRenderer {
             if let Some(ref src) = current_source {
                 if last_file.as_ref() != Some(&src.file) {
                     let short = short_path(&src.file, 3);
-                    println!("
--- {} --", short.dimmed().italic());
+                    println!(
+                        "
+-- {} --",
+                        short.dimmed().italic()
+                    );
                     last_file = Some(src.file.clone());
                 }
             } else {
@@ -91,17 +96,18 @@ impl Renderer for SplitRenderer {
                     .map(|text| {
                         let line_num_str = format!("{:>4}:", src.line);
                         let marker = "▶ ";
-                        // Visible lengths: line number + space + marker
-                        let prefix_len = line_num_str.width() + 1 + marker.width();
+                        // Visible lengths: line number + marker
+                        let prefix_len = line_num_str.width() + marker.width();
                         let display_width = self.source_width.saturating_sub(prefix_len);
 
                         let mut src_text = text.clone();
-                         if text.width() > display_width {
+                        if text.width() > display_width {
                             // Truncate based on display width
                             let mut current_width = 0;
                             let mut truncate_at = text.len();
                             for (i, c) in text.char_indices() {
-                                let char_width = UnicodeWidthStr::width(c.encode_utf8(&mut [0u8; 4]));
+                                let char_width =
+                                    UnicodeWidthStr::width(c.encode_utf8(&mut [0u8; 4]));
                                 if current_width + char_width > display_width.saturating_sub(3) {
                                     truncate_at = i;
                                     break;
@@ -109,13 +115,23 @@ impl Renderer for SplitRenderer {
                                 current_width += char_width;
                             }
                             src_text.truncate(truncate_at);
-                            src_text.push_str("...");
+                            src_text.push('…');
                         }
-                        format!("{} {} {}", line_num_str.dimmed(), marker.color(color).bold(), src_text.color(color))
+                        format!(
+                            "{} {} {}",
+                            line_num_str.dimmed(),
+                            marker.color(color).bold(),
+                            src_text.color(color)
+                        )
                     })
                     .unwrap_or_else(|| {
                         let line_num_str = format!("{:>4}:", src.line).dimmed();
-                        format!("{} {} {}", line_num_str, "▶ ".color(color).bold(), "?".color(color))
+                        format!(
+                            "{} {} {}",
+                            line_num_str,
+                            "▶ ".color(color).bold(),
+                            "?".color(color)
+                        )
                     })
             } else {
                 String::new()
@@ -131,7 +147,7 @@ impl Renderer for SplitRenderer {
             for k in 0..asm_lines.len() {
                 let src_part = if k == 0 { &source_text } else { "" };
                 let asm_part = &asm_lines[k];
-                
+
                 let stripped_src = strip_ansi(src_part);
                 let src_part_width = stripped_src.width();
                 let padding = self.source_width.saturating_sub(src_part_width);

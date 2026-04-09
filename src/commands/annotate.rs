@@ -4,8 +4,8 @@ use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::AnnotateArgs;
 use crate::source_reader::SourceReader;
 use crate::types::{AnnotatedInstruction, DisplayItem};
-use crate::ui::{Renderer, UnifiedRenderer, SplitRenderer};
-use color_eyre::eyre::{eyre, Context, Result};
+use crate::ui::{Renderer, SplitRenderer, UnifiedRenderer};
+use color_eyre::eyre::{Context, Result, eyre};
 use log::info;
 
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
@@ -63,8 +63,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
 
     info!(
         "Selected function: {} at {:#x}",
-        display_name,
-        selected_function.addr
+        display_name, selected_function.addr
     );
 
     let (start_addr, end_addr) = elf_backend
@@ -128,14 +127,22 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
 
     // 7. Render output
     let renderer: Box<dyn Renderer> = if args.format == "unified" {
-        Box::new(UnifiedRenderer { show_bytes: args.bytes })
+        Box::new(UnifiedRenderer {
+            show_bytes: args.bytes,
+        })
     } else if args.format.starts_with("split") {
         let parts: Vec<&str> = args.format.splitn(2, ':').collect();
         let source_width = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(80);
-        Box::new(SplitRenderer { show_bytes: args.bytes, source_width })
+        Box::new(SplitRenderer {
+            show_bytes: args.bytes,
+            source_width,
+        })
     } else {
         // Default to split
-        Box::new(SplitRenderer { show_bytes: args.bytes, source_width: 80 })
+        Box::new(SplitRenderer {
+            show_bytes: args.bytes,
+            source_width: 80,
+        })
     };
 
     renderer.render(&final_func_name, &display_items)?;
