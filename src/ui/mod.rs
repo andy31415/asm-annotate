@@ -62,11 +62,11 @@ impl Renderer for SplitRenderer {
 
         let mut i = 0;
         let mut last_file: Option<String> = None;
+        let mut last_line: Option<usize> = None;
 
         while i < items.len() {
             let current_source = items[i].source.clone();
             let color = items[i].color;
-
             // --- File Header ---
             if let Some(ref src) = current_source {
                 if last_file.as_ref() != Some(&src.file) {
@@ -77,9 +77,8 @@ impl Renderer for SplitRenderer {
                         short.dimmed().italic()
                     );
                     last_file = Some(src.file.clone());
+                    last_line = None; // Reset line tracking when file changes
                 }
-            } else {
-                last_file = None;
             }
 
             let mut j = i;
@@ -90,49 +89,54 @@ impl Renderer for SplitRenderer {
 
             // --- Source Side Text (prepared once for the group) ---
             let source_text = if let Some(ref src) = current_source {
-                items[i]
-                    .source_text
-                    .as_ref()
-                    .map(|text| {
-                        let line_num_str = format!("{:>4}:", src.line);
-                        let marker = "▶ ";
-                        // Visible lengths: line number + marker
-                        let prefix_len = line_num_str.width() + marker.width();
-                        let display_width = self.source_width.saturating_sub(prefix_len);
+                if last_line != Some(src.line) {
+                    last_line = Some(src.line);
+                    items[i]
+                        .source_text
+                        .as_ref()
+                        .map(|text| {
+                            let line_num_str = format!("{:>4}:", src.line);
+                            let marker = "▶ ";
+                            // Visible lengths: line number + marker
+                            let prefix_len = line_num_str.width() + marker.width();
+                            let display_width = self.source_width.saturating_sub(prefix_len);
 
-                        let mut src_text = text.clone();
-                        if text.width() > display_width {
-                            // Truncate based on display width
-                            let mut current_width = 0;
-                            let mut truncate_at = text.len();
-                            for (i, c) in text.char_indices() {
-                                let char_width =
-                                    UnicodeWidthStr::width(c.encode_utf8(&mut [0u8; 4]));
-                                if current_width + char_width > display_width.saturating_sub(3) {
-                                    truncate_at = i;
-                                    break;
+                            let mut src_text = text.clone();
+                            if text.width() > display_width {
+                                // Truncate based on display width
+                                let mut current_width = 0;
+                                let mut truncate_at = text.len();
+                                for (i, c) in text.char_indices() {
+                                    let char_width =
+                                        UnicodeWidthStr::width(c.encode_utf8(&mut [0u8; 4]));
+                                    if current_width + char_width > display_width.saturating_sub(3) {
+                                        truncate_at = i;
+                                        break;
+                                    }
+                                    current_width += char_width;
                                 }
-                                current_width += char_width;
+                                src_text.truncate(truncate_at);
+                                src_text.push('…');
                             }
-                            src_text.truncate(truncate_at);
-                            src_text.push('…');
-                        }
-                        format!(
-                            "{} {} {}",
-                            line_num_str.dimmed(),
-                            marker.color(color).bold(),
-                            src_text.color(color)
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        let line_num_str = format!("{:>4}:", src.line).dimmed();
-                        format!(
-                            "{} {} {}",
-                            line_num_str,
-                            "▶ ".color(color).bold(),
-                            "?".color(color)
-                        )
-                    })
+                            format!(
+                                "{} {} {}",
+                                line_num_str.dimmed(),
+                                marker.color(color).bold(),
+                                src_text.color(color)
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            let line_num_str = format!("{:>4}:", src.line).dimmed();
+                            format!(
+                                "{} {} {}",
+                                line_num_str,
+                                "▶ ".color(color).bold(),
+                                "?".color(color)
+                            )
+                        })
+                } else {
+                    String::new()
+                }
             } else {
                 String::new()
             };
