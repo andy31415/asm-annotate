@@ -108,7 +108,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         let mut names_to_demangle = vec![selected_function.name.clone()];
 
         // Extract potential mangled names from instruction operands
-        let mangled_regex = regex::Regex::new(r"_Z\\S+").unwrap();
+        let mangled_regex = regex::Regex::new(r"_Z[a-zA-Z0-9_]+").unwrap();
         for inst in &instructions {
             for cap in mangled_regex.captures_iter(&inst.mnemonic) {
                 names_to_demangle.push(cap[0].to_string());
