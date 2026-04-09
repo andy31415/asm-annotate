@@ -28,81 +28,16 @@ pub trait ElfBackend {
 
 pub struct GoblinElfBackend;
 
-impl ElfBackend for GoblinElfBackend {
-    fn list_functions(&self, elf_path: &Path) -> Result<Vec<FunctionInfo>> {
-        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
-        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
+#[derive(Default)]
+pub struct DwarfLoader {
+    buffer: Vec<u8>,
+}
 
-        let mut funcs = Vec::new();
+impl DwarfLoader {
+    fn load(&mut self, elf_path: &Path) -> Result<Dwarf<EndianSlice<'_, RunTimeEndian>>> {
+        self.buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
 
-        for sym in elf.syms.iter() {
-            if sym.st_type() == elf::sym::STT_FUNC && sym.st_size > 0 {
-                if let Some(name) = elf.strtab.get_at(sym.st_name) {
-                    funcs.push(FunctionInfo {
-                        name: name.to_string(),
-                        addr: sym.st_value & !1, // Clear Thumb bit
-                        size: sym.st_size,
-                    });
-                }
-            }
-        }
-
-        for sym in elf.dynsyms.iter() {
-            if sym.st_type() == elf::sym::STT_FUNC && sym.st_size > 0 {
-                if let Some(name) = elf.dynstrtab.get_at(sym.st_name) {
-                    if !funcs
-                        .iter()
-                        .any(|f| f.name == name && f.addr == (sym.st_value & !1))
-                    {
-                        funcs.push(FunctionInfo {
-                            name: name.to_string(),
-                            addr: sym.st_value & !1, // Clear Thumb bit
-                            size: sym.st_size,
-                        });
-                    }
-                }
-            }
-        }
-
-        funcs.sort_by_key(|f| f.addr);
-        Ok(funcs)
-    }
-
-    fn get_function_bounds(&self, elf_path: &Path, func_name: &str) -> Result<(u64, u64)> {
-        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
-        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
-
-        for sym in elf.syms.iter() {
-            if sym.st_type() == elf::sym::STT_FUNC {
-                if let Some(name) = elf.strtab.get_at(sym.st_name) {
-                    if name == func_name {
-                        let start = sym.st_value & !1; // Clear Thumb bit
-                        return Ok((start, start + sym.st_size));
-                    }
-                }
-            }
-        }
-
-        for sym in elf.dynsyms.iter() {
-            if sym.st_type() == elf::sym::STT_FUNC {
-                if let Some(name) = elf.dynstrtab.get_at(sym.st_name) {
-                    if name == func_name {
-                        let start = sym.st_value & !1; // Clear Thub bit
-                        return Ok((start, start + sym.st_size));
-                    }
-                }
-            }
-        }
-
-        Err(color_eyre::eyre::eyre!(
-            "Function '{}' not found in ELF symbol table.",
-            func_name
-        ))
-    }
-
-    fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, (String, usize)>> {
-        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
-        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
+        let elf = elf::Elf::parse(&self.buffer).wrap_err("Failed to parse ELF file")?;
 
         let endian = if elf.header.e_ident[elf::header::EI_DATA] == elf::header::ELFDATA2LSB {
             RunTimeEndian::Little
@@ -117,15 +52,91 @@ impl ElfBackend for GoblinElfBackend {
                 .iter()
                 .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(id.name()))
                 .and_then(|sh| {
-                    buffer.get(sh.sh_offset as usize..(sh.sh_offset + sh.sh_size) as usize)
+                    self.buffer
+                        .get(sh.sh_offset as usize..(sh.sh_offset + sh.sh_size) as usize)
                 })
                 .unwrap_or(&[]);
             Ok(EndianSlice::new(data, endian))
         };
 
         log::trace!("Loading dwarf...");
-        let dwarf: Dwarf<EndianSlice<RunTimeEndian>> = Dwarf::load(load_section)?;
-        log::trace!("Dwarf data loaded.");
+        Dwarf::load(load_section).wrap_err("Failed to load dwarf")
+    }
+}
+
+impl ElfBackend for GoblinElfBackend {
+    fn list_functions(&self, elf_path: &Path) -> Result<Vec<FunctionInfo>> {
+        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
+        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
+
+        let mut funcs = Vec::new();
+
+        for sym in elf.syms.iter() {
+            if sym.st_type() == elf::sym::STT_FUNC
+                && sym.st_size > 0
+                && let Some(name) = elf.strtab.get_at(sym.st_name)
+            {
+                funcs.push(FunctionInfo {
+                    name: name.to_string(),
+                    addr: sym.st_value & !1, // Clear Thumb bit
+                    size: sym.st_size,
+                });
+            }
+        }
+
+        for sym in elf.dynsyms.iter() {
+            if sym.st_type() == elf::sym::STT_FUNC
+                && sym.st_size > 0
+                && let Some(name) = elf.dynstrtab.get_at(sym.st_name)
+                && !funcs
+                    .iter()
+                    .any(|f| f.name == name && f.addr == (sym.st_value & !1))
+            {
+                funcs.push(FunctionInfo {
+                    name: name.to_string(),
+                    addr: sym.st_value & !1, // Clear Thumb bit
+                    size: sym.st_size,
+                });
+            }
+        }
+
+        funcs.sort_by_key(|f| f.addr);
+        Ok(funcs)
+    }
+
+    fn get_function_bounds(&self, elf_path: &Path, func_name: &str) -> Result<(u64, u64)> {
+        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
+        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
+
+        for sym in elf.syms.iter() {
+            if sym.st_type() == elf::sym::STT_FUNC
+                && let Some(name) = elf.strtab.get_at(sym.st_name)
+                && name == func_name
+            {
+                let start = sym.st_value & !1; // Clear Thumb bit
+                return Ok((start, start + sym.st_size));
+            }
+        }
+
+        for sym in elf.dynsyms.iter() {
+            if sym.st_type() == elf::sym::STT_FUNC
+                && let Some(name) = elf.dynstrtab.get_at(sym.st_name)
+                && name == func_name
+            {
+                let start = sym.st_value & !1; // Clear Thub bit
+                return Ok((start, start + sym.st_size));
+            }
+        }
+
+        Err(color_eyre::eyre::eyre!(
+            "Function '{}' not found in ELF symbol table.",
+            func_name
+        ))
+    }
+
+    fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, (String, usize)>> {
+        let mut loader = DwarfLoader::default();
+        let dwarf = loader.load(elf_path)?;
 
         let mut mapping = HashMap::new();
 
@@ -176,17 +187,16 @@ impl ElfBackend for GoblinElfBackend {
                 if dir_index != 0 {
                     if let Some(dir_offset) =
                         header.include_directories().get(dir_index as usize - 1)
+                        && let AttributeValue::String(slice) = dir_offset
                     {
-                        if let AttributeValue::String(slice) = dir_offset {
-                            let path_str = String::from_utf8_lossy(slice.slice());
-                            log::trace!("HAVE DIR OFFSET: {:#?}", path_str);
-                            let dir_path = Path::new(path_str.as_ref());
-                            if dir_path.is_absolute() {
-                                path.clear();
-                                path.push(dir_path);
-                            } else {
-                                path = base_dir.join(dir_path);
-                            }
+                        let path_str = String::from_utf8_lossy(slice.slice());
+                        log::trace!("HAVE DIR OFFSET: {:#?}", path_str);
+                        let dir_path = Path::new(path_str.as_ref());
+                        if dir_path.is_absolute() {
+                            path.clear();
+                            path.push(dir_path);
+                        } else {
+                            path = base_dir.join(dir_path);
                         }
                     }
                 } else {

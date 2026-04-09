@@ -2,7 +2,7 @@ use crate::backends::demangle::{CppDemangleBackend, DemanglerBackend};
 use crate::backends::elf::{ElfBackend, FunctionInfo, GoblinElfBackend};
 use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::AnnotateArgs;
-use color_eyre::eyre::{eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use log::info;
 
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
@@ -22,7 +22,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         None => {
             return Err(eyre!(
                 "Function name not provided. Use --list to see available functions."
-            ))
+            ));
         }
     };
 

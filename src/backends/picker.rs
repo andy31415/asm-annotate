@@ -1,6 +1,6 @@
 use crate::backends::demangle::DemanglerBackend;
 use crate::backends::elf::FunctionInfo;
-use color_eyre::eyre::{eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
