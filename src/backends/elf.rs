@@ -8,13 +8,71 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use gimli::read::{self as _, Dwarf, EndianSlice};
-use gimli::{AttributeValue, DebugAddr, RunTimeEndian, SectionId};
+use gimli::{AttributeValue, DebugAddr, LineProgramHeader, LineRow, RunTimeEndian, SectionId};
 
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
     pub name: String,
     pub addr: u64,
     pub size: u64,
+}
+
+struct SourceLocation(String, usize);
+
+fn source_location(
+    base_dir: &Option<String>,
+    header: &LineProgramHeader<EndianSlice<RunTimeEndian>>,
+    row: &LineRow,
+) -> Option<SourceLocation> {
+    let line = row.line()?;
+
+    let file_entry = header.file(row.file_index())?;
+    let mut path = PathBuf::new();
+
+    let base_dir = match base_dir {
+        Some(path) => {
+            let mut x = PathBuf::new();
+            x.push(path);
+            x
+        }
+        None => PathBuf::new(),
+    };
+
+    // File directory from line program header
+    let dir_index = file_entry.directory_index();
+    if dir_index != 0 {
+        if let Some(dir_offset) = header.include_directories().get(dir_index as usize - 1)
+            && let AttributeValue::String(slice) = dir_offset
+        {
+            let path_str = String::from_utf8_lossy(slice.slice());
+            log::trace!("HAVE DIR OFFSET: {:#?}", path_str);
+            let dir_path = Path::new(path_str.as_ref());
+            if dir_path.is_absolute() {
+                path.clear();
+                path.push(dir_path);
+            } else {
+                path = base_dir.join(dir_path);
+            }
+        }
+    } else {
+        path.push(base_dir);
+    }
+
+    // File name from line program header
+    if let AttributeValue::String(slice) = file_entry.path_name() {
+        let path_str = String::from_utf8_lossy(slice.slice());
+        log::trace!("FILE PATH NAME: {:#?}", path_str);
+        path.push(path_str.as_ref());
+    }
+
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+
+    Some(SourceLocation(
+        path.to_string_lossy().into_owned(),
+        line.get() as usize,
+    ))
 }
 
 pub trait ElfBackend {
@@ -149,6 +207,11 @@ impl ElfBackend for GoblinElfBackend {
                 continue;
             }
 
+            // Base directory (DW_AT_comp_dir)
+            let base_dir = unit.comp_dir.map(|comp_dir_offset| {
+                String::from_utf8_lossy(comp_dir_offset.slice()).into_owned()
+            });
+
             // we checked none above
             let program = program.unwrap();
             // log::trace!("PROGRAM: {:#?}", program);
@@ -156,69 +219,15 @@ impl ElfBackend for GoblinElfBackend {
             let header = program.header().clone();
             let mut rows = program.rows();
 
-            while let Some((_x, row)) = rows.next_row()? {
+            while let Some((_, row)) = rows.next_row()? {
                 if row.end_sequence() {
                     continue;
                 }
 
-                let line = row.line();
-                if line.is_none() {
-                    continue;
+                if let Some(SourceLocation(path, line)) = source_location(&base_dir, &header, row) {
+                    log::debug!("FOUND {:#}:{:#}", path, line);
+                    mapping.insert(row.address(), (path, line));
                 }
-                let line = line.unwrap();
-
-                let file_entry = header.file(row.file_index());
-                if file_entry.is_none() {
-                    continue;
-                }
-
-                let file_entry = file_entry.unwrap();
-                let mut path = PathBuf::new();
-
-                // Base directory (DW_AT_comp_dir)
-                let mut base_dir = PathBuf::new();
-                if let Some(comp_dir_offset) = unit.comp_dir {
-                    base_dir.push(String::from_utf8_lossy(comp_dir_offset.slice()).as_ref());
-                    log::trace!("HAVE base dir: {:#?}", base_dir);
-                }
-
-                // File directory from line program header
-                let dir_index = file_entry.directory_index();
-                if dir_index != 0 {
-                    if let Some(dir_offset) =
-                        header.include_directories().get(dir_index as usize - 1)
-                        && let AttributeValue::String(slice) = dir_offset
-                    {
-                        let path_str = String::from_utf8_lossy(slice.slice());
-                        log::trace!("HAVE DIR OFFSET: {:#?}", path_str);
-                        let dir_path = Path::new(path_str.as_ref());
-                        if dir_path.is_absolute() {
-                            path.clear();
-                            path.push(dir_path);
-                        } else {
-                            path = base_dir.join(dir_path);
-                        }
-                    }
-                } else {
-                    path = base_dir;
-                }
-
-                // File name from line program header
-                if let AttributeValue::String(slice) = file_entry.path_name() {
-                    let path_str = String::from_utf8_lossy(slice.slice());
-                    log::trace!("FILE PATH NAME: {:#?}", path_str);
-                    path.push(path_str.as_ref());
-                }
-
-                if path.as_os_str().is_empty() {
-                    continue;
-                }
-
-                log::debug!("FOUND {:#?}:{:#}", path, line);
-                mapping.insert(
-                    row.address(),
-                    (path.to_string_lossy().into_owned(), line.get() as usize),
-                );
             }
         }
 
