@@ -2,12 +2,13 @@
 use color_eyre::eyre::{Context, Result};
 use goblin::elf;
 use log;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use gimli::read::{self as _, Dwarf, EndianSlice};
-use gimli::{RunTimeEndian, SectionId};
+use gimli::{AttributeValue, RunTimeEndian, SectionId};
 
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
@@ -23,6 +24,27 @@ pub trait ElfBackend {
 }
 
 pub struct GoblinElfBackend;
+
+trait AsDwarfString<'a> {
+    fn get_string(&'a self, dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>>;
+}
+
+impl<'a> AsDwarfString<'a> for EndianSlice<'a, RunTimeEndian> {
+    fn get_string(&'a self, dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
+        // TODO: this does NOT work
+        //
+        // let rb = dwarf.string(self)?;
+        // Ok(rb.to_string_lossy())
+
+        unimplemented!()
+    }
+}
+
+impl<'a> AsDwarfString<'a> for AttributeValue<EndianSlice<'a, RunTimeEndian>, usize> {
+    fn get_string(&'a self, dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
+        unimplemented!()
+    }
+}
 
 impl ElfBackend for GoblinElfBackend {
     fn list_functions(&self, elf_path: &Path) -> Result<Vec<FunctionInfo>> {
@@ -125,7 +147,7 @@ impl ElfBackend for GoblinElfBackend {
         while let Some(header) = iter.next()? {
             let unit = dwarf.unit(header)?;
             if let Some(program) = unit.line_program.clone() {
-                let header = program.header();
+                let header = program.header().clone();
                 let mut rows = program.rows();
                 while let Some((_, row)) = rows.next_row()? {
                     if row.end_sequence() {
@@ -138,8 +160,8 @@ impl ElfBackend for GoblinElfBackend {
                         // Base directory (DW_AT_comp_dir)
                         let mut base_dir = PathBuf::new();
                         if let Some(comp_dir_offset) = unit.comp_dir {
-                            if let Ok(rb) = dwarf.string(comp_dir_offset) {
-                                base_dir.push(rb.to_string_lossy().as_ref());
+                            if let Ok(d) = comp_dir_offset.get_string(&dwarf) {
+                                base_dir.push(d.as_ref());
                             }
                         }
 
@@ -149,8 +171,7 @@ impl ElfBackend for GoblinElfBackend {
                             if let Some(dir_offset) =
                                 header.include_directories().get(dir_index as usize - 1)
                             {
-                                if let Ok(rb) = dwarf.string(*dir_offset) {
-                                    let dir_str = rb.to_string_lossy();
+                                if let Ok(dir_str) = dir_offset.get_string(&dwarf) {
                                     let dir_path = Path::new(dir_str.as_ref());
                                     if dir_path.is_absolute() {
                                         path = dir_path.to_path_buf();
@@ -164,8 +185,8 @@ impl ElfBackend for GoblinElfBackend {
                         }
 
                         // File name from line program header
-                        if let Ok(rb) = dwarf.string(file_entry.path_name()) {
-                            path.push(rb.to_string_lossy().as_ref());
+                        if let Ok(file_name) = file_entry.path_name().get_string(&dwarf) {
+                            path.push(file_name.as_ref());
                         }
 
                         if !path.as_os_str().is_empty() {
