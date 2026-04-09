@@ -1,13 +1,18 @@
 use crate::backends::disasm::Instruction;
-use crate::types::{DisplayItem, SourceLocation};
 use crate::source_reader::SourceReader;
+use crate::types::{DisplayItem, SourceLocation};
 use colored::*;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
 
 pub trait Renderer {
-    fn render(&self, func_name: &str, items: &[DisplayItem], source_reader: &SourceReader) -> color_eyre::Result<()>;
+    fn render(
+        &self,
+        func_name: &str,
+        items: &[DisplayItem],
+        source_reader: &SourceReader,
+    ) -> color_eyre::Result<()>;
 }
 
 pub struct UnifiedRenderer {
@@ -15,7 +20,12 @@ pub struct UnifiedRenderer {
 }
 
 impl Renderer for UnifiedRenderer {
-    fn render(&self, func_name: &str, items: &[DisplayItem], _source_reader: &SourceReader) -> color_eyre::Result<()> {
+    fn render(
+        &self,
+        func_name: &str,
+        items: &[DisplayItem],
+        _source_reader: &SourceReader,
+    ) -> color_eyre::Result<()> {
         render_header(func_name, items)?;
 
         for item in items {
@@ -63,7 +73,12 @@ fn strip_ansi(s: &str) -> String {
 }
 
 impl Renderer for SplitRenderer {
-    fn render(&self, func_name: &str, items: &[DisplayItem], _source_reader: &SourceReader) -> color_eyre::Result<()> {
+    fn render(
+        &self,
+        func_name: &str,
+        items: &[DisplayItem],
+        _source_reader: &SourceReader,
+    ) -> color_eyre::Result<()> {
         render_header(func_name, items)?;
 
         let mut i = 0;
@@ -75,16 +90,17 @@ impl Renderer for SplitRenderer {
             let color = items[i].color;
             // --- File Header ---
             if let Some(ref src) = current_source
-                && last_file.as_ref() != Some(&src.file) {
-                    let short = short_path(&src.file, 3);
-                    println!(
-                        "
+                && last_file.as_ref() != Some(&src.file)
+            {
+                let short = short_path(&src.file, 3);
+                println!(
+                    "
 -- {} --",
-                        short.dimmed().italic()
-                    );
-                    last_file = Some(src.file.clone());
-                    last_line = None; // Reset line tracking when file changes
-                }
+                    short.dimmed().italic()
+                );
+                last_file = Some(src.file.clone());
+                last_line = None; // Reset line tracking when file changes
+            }
 
             let mut j = i;
             while j < items.len() && items[j].source == current_source {
@@ -248,7 +264,12 @@ pub struct SideBySideRenderer {
 }
 
 impl Renderer for SideBySideRenderer {
-    fn render(&self, func_name: &str, items: &[DisplayItem], source_reader: &SourceReader) -> color_eyre::Result<()> {
+    fn render(
+        &self,
+        func_name: &str,
+        items: &[DisplayItem],
+        source_reader: &SourceReader,
+    ) -> color_eyre::Result<()> {
         use std::collections::{BTreeMap, HashMap};
         render_header(func_name, items)?;
 
@@ -261,7 +282,9 @@ impl Renderer for SideBySideRenderer {
                     .entry(src.file.clone())
                     .or_default()
                     .insert(src.line, ());
-                file_line_color.entry((src.file.clone(), src.line)).or_insert(item.color);
+                file_line_color
+                    .entry((src.file.clone(), src.line))
+                    .or_insert(item.color);
             }
         }
 
@@ -287,7 +310,8 @@ impl Renderer for SideBySideRenderer {
                 let mut j = i + 1;
                 while j < sorted_asm_lines.len() {
                     let next_asm_line = sorted_asm_lines[j];
-                    if std::cmp::max(1, next_asm_line.saturating_sub(self.context_lines)) <= end + 1 {
+                    if std::cmp::max(1, next_asm_line.saturating_sub(self.context_lines)) <= end + 1
+                    {
                         end = next_asm_line + self.context_lines;
                         j += 1;
                     } else {
@@ -300,25 +324,36 @@ impl Renderer for SideBySideRenderer {
 
             let mut last_printed_line: Option<usize> = None;
             for (start, end) in ranges {
-                if let Some(last) = last_printed_line {
-                    if start > last + 1 {
+                if let Some(last) = last_printed_line
+                    && start > last + 1 {
                         let line_num_str = format!("{:>4}:", "").dimmed();
                         source_panel_lines.push(format!("{} ~", line_num_str));
                     }
-                }
 
                 for l in start..=end {
                     let color = file_line_color.get(&(file.clone(), l));
-                    let line_content = source_reader.read_line(file, l).unwrap_or(None).unwrap_or_else(|| "".to_string());
+                    let line_content = source_reader
+                        .read_line(file, l)
+                        .unwrap_or(None)
+                        .unwrap_or_default();
                     let is_main = lines.contains_key(&l);
 
                     let line_num_str = format!("{:>4}:", l);
 
                     let styled_content = if is_main {
                         let c = color.unwrap_or(&Color::White);
-                        format!("{} {} {}", line_num_str.color(*c).bold(), "▶".color(*c).bold(), line_content.color(*c))
+                        format!(
+                            "{} {} {}",
+                            line_num_str.color(*c).bold(),
+                            "▶".color(*c).bold(),
+                            line_content.color(*c)
+                        )
                     } else {
-                        format!("{}   {}", line_num_str.dimmed(), line_content.truecolor(100, 100, 100))
+                        format!(
+                            "{}   {}",
+                            line_num_str.dimmed(),
+                            line_content.truecolor(100, 100, 100)
+                        )
                     };
 
                     source_panel_lines.push(styled_content);
@@ -347,9 +382,9 @@ impl Renderer for SideBySideRenderer {
                 for char in src_line.chars() {
                     let char_width = UnicodeWidthStr::width(char.encode_utf8(&mut [0u8; 4]));
                     if current_width + char_width > self.source_width {
-                         if current_width + 1 <= self.source_width {
+                        if current_width < self.source_width {
                             truncated.push('…');
-                         }
+                        }
                         break;
                     }
                     truncated.push(char);
