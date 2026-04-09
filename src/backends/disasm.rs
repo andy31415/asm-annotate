@@ -18,25 +18,33 @@ pub struct Instruction {
     pub mnemonic: String,
 }
 
-// TODO: Implement this using Capstone instead of objdump
-pub fn disassemble_range(
+fn try_disassemble(
     elf_path: &Path,
     objdump_bin: &str,
     start: u64,
     end: u64,
 ) -> Result<Vec<Instruction>> {
+    log::debug!("Trying objdump: {}", objdump_bin);
     let output = Command::new(objdump_bin)
         .arg("-d")
         .arg(format!("--start-address={}", start))
         .arg(format!("--stop-address={}", end))
         .arg(elf_path)
         .output()
-        .wrap_err("Failed to run objdump")?;
+        .wrap_err(format!("Failed to execute {}", objdump_bin))?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("can't disassemble for architecture UNKNOWN") {
+            return Err(color_eyre::eyre::eyre!(
+                "{} architecture UNKNOWN",
+                objdump_bin
+            ));
+        }
         return Err(color_eyre::eyre::eyre!(
-            "objdump failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "{} failed: {}",
+            objdump_bin,
+            stderr
         ));
     }
 
@@ -75,16 +83,62 @@ pub fn disassemble_range(
         });
     }
 
+    if instructions.is_empty() {
+        return Err(color_eyre::eyre::eyre!(
+            "No instructions found by {}",
+            objdump_bin
+        ));
+    }
+
     Ok(instructions)
+}
+
+pub fn disassemble_range(
+    elf_path: &Path,
+    user_objdump: Option<&str>,
+    start: u64,
+    end: u64,
+) -> Result<Vec<Instruction>> {
+    let default_bins = vec!["arm-none-eabi-objdump", "objdump"];
+    let mut objdump_bins: Vec<&str> = default_bins.clone();
+
+    if let Some(bin) = user_objdump {
+        if !default_bins.contains(&bin) {
+            objdump_bins.push(bin);
+        }
+    }
+
+    for bin in &objdump_bins {
+        match try_disassemble(elf_path, bin, start, end) {
+            Ok(instructions) => {
+                log::info!("Using objdump: {}", bin);
+                return Ok(instructions);
+            }
+            Err(e) => {
+                if e.to_string().contains("architecture UNKNOWN") {
+                    log::debug!("{} failed (Architecture UNKNOWN), trying next...", bin);
+                } else {
+                    log::debug!("{} failed: {}, trying next...", bin, e);
+                }
+            }
+        }
+    }
+
+    Err(color_eyre::eyre::eyre!(
+        "All objdump attempts failed for range {:#x}-{:#x}",
+        start,
+        end
+    ))
 }
 
 pub fn demangle_batch(names: Vec<String>) -> HashMap<String, String> {
     let mut demangled_map = HashMap::new();
     for name in names {
         if let Ok(symbol) = cpp_demangle::Symbol::new(name.as_bytes())
-            && let Ok(demangled) = symbol.demangle(&DemangleOptions::default()) {
-                demangled_map.insert(name, demangled);
-            }
+            && let Ok(demangled) = symbol.demangle(&DemangleOptions::default())
+        {
+            demangled_map.insert(name, demangled);
+        }
     }
     demangled_map
 }

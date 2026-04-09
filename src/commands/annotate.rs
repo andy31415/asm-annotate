@@ -79,19 +79,45 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let addr_to_src = elf_backend
         .build_addr_to_src(&args.elf)
         .wrap_err("Failed to build address to source mapping")?;
-
-    info!("Address to source mapping: (showing max 5)");
-    for (addr, (file, line)) in addr_to_src.iter().take(5) {
-        println!("  {:#x}: {}:{}", addr, file, line);
-    }
-    if addr_to_src.len() > 5 {
-        println!("  ... and {} more entries", addr_to_src.len() - 5);
+    if addr_to_src.is_empty() {
+        eprintln!("Warning: No DWARF info found. Build with -g to get source mapping.");
+    } else {
+        info!("Built address to source mapping with {} entries.", addr_to_src.len());
     }
 
     // 3. Disassemble range
+    let objdump_bin = "objdump"; // Simplified for now
+    let mut instructions = crate::backends::disasm::disassemble_range(
+        &args.elf,
+        args.objdump.as_deref(),
+        start_addr,
+        end_addr,
+    )
+    .wrap_err("Failed to disassemble")?;
+    if instructions.is_empty() {
+        eprintln!("Warning: No instructions found in range.");
+    }
+
     // 4. Demangle names
+    let final_func_name = if !args.no_demangle {
+        let mut names_to_demangle = vec![selected_function.name.clone()];
+        // TODO: Extract potential mangled names from instruction operands
+
+        let demangled_map = demangler_backend.demangle_batch(&names_to_demangle)?;
+        crate::backends::disasm::apply_demangling(
+            selected_function.name.clone(),
+            &mut instructions,
+            &demangled_map,
+        )
+    } else {
+        selected_function.name.clone()
+    };
+
     // 5. Build render groups
+    let groups = crate::core::build_groups(&instructions, &addr_to_src)?;
+
     // 6. Render output
+    crate::ui::render_unified(&final_func_name, &groups, args.bytes)?;
 
     Ok(())
 }

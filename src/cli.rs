@@ -74,7 +74,7 @@ pub struct AnnotateArgs {
 
     /// objdump binary to use (auto-detected if omitted)
     #[arg(long, value_name = "BINARY")]
-    pub objdump: Option<PathBuf>,
+    pub objdump: Option<String>,
 
     /// Show per-source-line instruction/byte cost table
     #[arg(long)]
