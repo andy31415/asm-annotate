@@ -9,7 +9,8 @@ pub fn render_unified(
     show_bytes: bool,
 ) -> color_eyre::Result<()> {
     render_header(func_name, groups)?;
-    let mut shown_src_keys: std::collections::HashSet<(Option<String>, Option<usize>)> = std::collections::HashSet::new();
+    let mut shown_src_keys: std::collections::HashSet<(Option<String>, Option<usize>)> =
+        std::collections::HashSet::new();
 
     for group in groups {
         let src_key = (group.src_file.clone(), group.src_line_start);
@@ -47,7 +48,7 @@ pub fn render_unified(
                 "".to_string()
             };
             let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
-            let mnem_word = parts.get(0).unwrap_or(&"");
+            let mnem_word = parts.first().unwrap_or(&"");
             let operands = parts.get(1).unwrap_or(&"");
 
             println!(
@@ -68,8 +69,12 @@ pub fn render_unified(
 
 // Helper to render the function header
 fn render_header(func_name: &str, groups: &[RenderGroup]) -> color_eyre::Result<()> {
-    let all_insns: Vec<&crate::backends::disasm::Instruction> = groups.iter().flat_map(|g| &g.instructions).collect();
-    let total_bytes = all_insns.iter().map(|i| i.bytes.replace(" ", "").len() / 2).sum::<usize>();
+    let all_insns: Vec<&crate::backends::disasm::Instruction> =
+        groups.iter().flat_map(|g| &g.instructions).collect();
+    let total_bytes = all_insns
+        .iter()
+        .map(|i| i.bytes.replace(" ", "").len() / 2)
+        .sum::<usize>();
 
     println!();
     println!(

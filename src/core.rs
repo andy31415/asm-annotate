@@ -12,8 +12,9 @@ pub struct RenderGroup {
 }
 
 const PALETTE: &[&str] = &[
-    "#ff6b6b", "#ffd93d", "#6bcb77", "#4d96ff", "#ff922b", "#cc5de8", "#20c997", "#f783ac", "#74c0fc", "#a9e34b",
-    "#ff8787", "#ffe066", "#8ce99a", "#74c0fc", "#ffa94d", "#da77f2", "#63e6be", "#faa2c1", "#a5d8ff", "#c0eb75",
+    "#ff6b6b", "#ffd93d", "#6bcb77", "#4d96ff", "#ff922b", "#cc5de8", "#20c997", "#f783ac",
+    "#74c0fc", "#a9e34b", "#ff8787", "#ffe066", "#8ce99a", "#74c0fc", "#ffa94d", "#da77f2",
+    "#63e6be", "#faa2c1", "#a5d8ff", "#c0eb75",
 ];
 
 // Basic build_groups implementation
@@ -31,11 +32,11 @@ pub fn build_groups(
     let mut color_idx = 0;
 
     for inst in instructions {
-        if let Some(key) = addr_to_src.get(&inst.address) {
-            if !color_map.contains_key(key) {
-                color_map.insert(key.clone(), PALETTE[color_idx % PALETTE.len()]);
-                color_idx += 1;
-            }
+        if let Some(key) = addr_to_src.get(&inst.address)
+            && !color_map.contains_key(key)
+        {
+            color_map.insert(key.clone(), PALETTE[color_idx % PALETTE.len()]);
+            color_idx += 1;
         }
     }
 

@@ -82,11 +82,14 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     if addr_to_src.is_empty() {
         eprintln!("Warning: No DWARF info found. Build with -g to get source mapping.");
     } else {
-        info!("Built address to source mapping with {} entries.", addr_to_src.len());
+        info!(
+            "Built address to source mapping with {} entries.",
+            addr_to_src.len()
+        );
     }
 
     // 3. Disassemble range
-    let objdump_bin = "objdump"; // Simplified for now
+    let _objdump_bin = "objdump"; // Simplified for now
     let mut instructions = crate::backends::disasm::disassemble_range(
         &args.elf,
         args.objdump.as_deref(),
@@ -100,7 +103,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
 
     // 4. Demangle names
     let final_func_name = if !args.no_demangle {
-        let mut names_to_demangle = vec![selected_function.name.clone()];
+        let names_to_demangle = vec![selected_function.name.clone()];
         // TODO: Extract potential mangled names from instruction operands
 
         let demangled_map = demangler_backend.demangle_batch(&names_to_demangle)?;

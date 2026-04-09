@@ -102,10 +102,10 @@ pub fn disassemble_range(
     let default_bins = vec!["arm-none-eabi-objdump", "objdump"];
     let mut objdump_bins: Vec<&str> = default_bins.clone();
 
-    if let Some(bin) = user_objdump {
-        if !default_bins.contains(&bin) {
-            objdump_bins.push(bin);
-        }
+    if let Some(bin) = user_objdump
+        && !default_bins.contains(&bin)
+    {
+        objdump_bins.push(bin);
     }
 
     for bin in &objdump_bins {
