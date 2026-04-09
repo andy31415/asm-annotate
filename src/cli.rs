@@ -43,7 +43,9 @@ impl std::fmt::Display for LogLevel {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// List all functions in the ELF and exit
+    #[command(visible_alias = "l")]
     List(ListArgs),
+
     /// Annotate a function with source code
     #[command(visible_alias = "a")]
     Annotate(AnnotateArgs),
