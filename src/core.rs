@@ -1,5 +1,6 @@
 use crate::backends::disasm::Instruction;
 use std::collections::HashMap;
+use colored::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceLocation {
@@ -25,6 +26,77 @@ pub fn annotate_instructions(
         })
         .collect()
 }
+
+#[derive(Debug, Clone)]
+pub struct DisplayItem {
+    pub instruction: Instruction,
+    pub source: Option<SourceLocation>,
+    pub source_text: Option<String>, // Single line of source text
+    pub color: Color,
+    pub is_new_file: bool,
+    pub is_new_line: bool,
+}
+
+pub fn prepare_for_display(
+    annotated_instructions: &[AnnotatedInstruction],
+    // remappings: &[(String, String)], // TODO: Add remappings
+) -> color_eyre::Result<Vec<DisplayItem>> {
+    let mut display_items = Vec::new();
+    let mut color_map: HashMap<SourceLocation, Color> = HashMap::new();
+    let mut color_idx = 0;
+    let mut prev_source: Option<SourceLocation> = None;
+    let mut prev_file: Option<String> = None;
+
+    // Simplified color palette from colored crate
+    const UI_PALETTE: &[Color] = &[
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+    ];
+
+    for ai in annotated_instructions {
+        let mut color = Color::White;
+        if let Some(ref src) = ai.source {
+            if !color_map.contains_key(src) {
+                color_map.insert(src.clone(), UI_PALETTE[color_idx % UI_PALETTE.len()]);
+                color_idx += 1;
+            }
+            color = *color_map.get(src).unwrap();
+        }
+
+        let source_text = if let Some(ref src) = ai.source {
+            // TODO: Actually read the source file and line
+            Some(format!("{}:{}", src.file, src.line))
+        } else {
+            None
+        };
+
+        let is_new_file = match &ai.source {
+            Some(src) => prev_file.as_ref() != Some(&src.file),
+            None => prev_file.is_some(), // New block if we just came from a file
+        };
+
+        let is_new_line = ai.source != prev_source;
+
+        display_items.push(DisplayItem {
+            instruction: ai.instruction.clone(),
+            source: ai.source.clone(),
+            source_text,
+            color,
+            is_new_file,
+            is_new_line,
+        });
+
+        prev_file = ai.source.as_ref().map(|s| s.file.clone());
+        prev_source = ai.source.clone();
+    }
+
+    Ok(display_items)
+}
+
 
 #[derive(Debug, Clone)]
 pub struct RenderGroup {
