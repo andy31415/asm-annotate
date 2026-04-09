@@ -30,7 +30,7 @@ trait AsDwarfString<'a> {
 }
 
 impl<'a> AsDwarfString<'a> for EndianSlice<'a, RunTimeEndian> {
-    fn get_string(&'a self, dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
+    fn get_string(&'a self, _dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
         // TODO: this does NOT work
         //
         // let rb = dwarf.string(self)?;
@@ -41,7 +41,7 @@ impl<'a> AsDwarfString<'a> for EndianSlice<'a, RunTimeEndian> {
 }
 
 impl<'a> AsDwarfString<'a> for AttributeValue<EndianSlice<'a, RunTimeEndian>, usize> {
-    fn get_string(&'a self, dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
+    fn get_string(&'a self, _dwarf: &Dwarf<EndianSlice<RunTimeEndian>>) -> Result<Cow<'a, str>> {
         unimplemented!()
     }
 }
