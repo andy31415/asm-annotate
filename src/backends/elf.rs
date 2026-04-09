@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+use crate::core::SourceLocation;
 use color_eyre::eyre::{Context, Result};
 use goblin::elf;
 use log;
@@ -16,8 +17,6 @@ pub struct FunctionInfo {
     pub addr: u64,
     pub size: u64,
 }
-
-struct SourceLocation(String, usize);
 
 fn source_location(
     base_dir: &Option<String>,
@@ -69,10 +68,10 @@ fn source_location(
         return None;
     }
 
-    Some(SourceLocation(
-        path.to_string_lossy().into_owned(),
-        line.get() as usize,
-    ))
+    Some(SourceLocation {
+        file: path.to_string_lossy().into_owned(),
+        line: line.get() as usize,
+    })
 }
 
 pub trait ElfBackend {
@@ -81,7 +80,7 @@ pub trait ElfBackend {
 
     // Build a mapping for:
     //    - address -> (source file: line-number)
-    fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, (String, usize)>>;
+    fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, SourceLocation>>;
 }
 
 pub struct GoblinElfBackend;
@@ -195,7 +194,7 @@ impl ElfBackend for GoblinElfBackend {
         ))
     }
 
-    fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, (String, usize)>> {
+    fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, SourceLocation>> {
         let mut loader = DwarfLoader::default();
         let dwarf = loader.load(elf_path)?;
 
@@ -227,9 +226,9 @@ impl ElfBackend for GoblinElfBackend {
                     continue;
                 }
 
-                if let Some(SourceLocation(path, line)) = source_location(&base_dir, &header, row) {
-                    log::debug!("FOUND {:#}:{:#}", path, line);
-                    mapping.insert(row.address(), (path, line));
+                if let Some(src_loc) = source_location(&base_dir, &header, row) {
+                    log::debug!("FOUND {}:{}", src_loc.file, src_loc.line);
+                    mapping.insert(row.address(), src_loc);
                 }
             }
         }
