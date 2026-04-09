@@ -57,8 +57,36 @@ impl ElfBackend for GoblinElfBackend {
         Ok(funcs)
     }
 
-    fn get_function_bounds(&self, _elf_path: &Path, _func_name: &str) -> Result<(u64, u64)> {
-        unimplemented!()
+    fn get_function_bounds(&self, elf_path: &Path, func_name: &str) -> Result<(u64, u64)> {
+        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
+        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
+
+        for sym in elf.syms.iter() {
+            if sym.st_type() == elf::sym::STT_FUNC {
+                if let Some(name) = elf.strtab.get_at(sym.st_name) {
+                    if name == func_name {
+                        let start = sym.st_value & !1; // Clear Thumb bit
+                        return Ok((start, start + sym.st_size));
+                    }
+                }
+            }
+        }
+
+        for sym in elf.dynsyms.iter() {
+            if sym.st_type() == elf::sym::STT_FUNC {
+                if let Some(name) = elf.dynstrtab.get_at(sym.st_name) {
+                    if name == func_name {
+                        let start = sym.st_value & !1; // Clear Thumb bit
+                        return Ok((start, start + sym.st_size));
+                    }
+                }
+            }
+        }
+
+        Err(color_eyre::eyre::eyre!(
+            "Function '{}' not found in ELF symbol table.",
+            func_name
+        ))
     }
 
     fn build_addr_to_src(&self, _elf_path: &Path) -> Result<HashMap<u64, (String, usize)>> {
