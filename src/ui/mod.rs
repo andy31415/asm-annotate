@@ -55,43 +55,48 @@ impl Renderer for SplitRenderer {
             let current_source = items[i].source.clone();
             let color = items[i].color;
 
+            // --- File Header ---
+            if items[i].is_new_file {
+                if let Some(ref src) = current_source {
+                    let short = short_path(&src.file, 3);
+                    let file_header = format!("<{}:{}>", short, src.line);
+                    println!("{}", file_header.dimmed().italic());
+                }
+            }
+
             let mut j = i;
             while j < items.len() && items[j].source == current_source {
                 j += 1;
             }
             let group = &items[i..j];
 
-            // --- Source Side --- multiplce lines for this group
-            let mut source_lines: Vec<String> = Vec::new();
-            if let Some(ref src) = current_source {
-                if items[i].is_new_file {
-                    let short = short_path(&src.file, 3);
-                    source_lines.push(format!("  {}", format!("<{}:{}>", short, src.line).dimmed().italic()));
-                }
+            // --- Source Side Text (printed only once for the group) ---
+            let source_text = if current_source.is_some() {
                 if let Some(ref text) = items[i].source_text {
-                     let display_width = self.source_width.saturating_sub(4);
-                     let mut src_text = text.clone();
+                    let display_width = self.source_width.saturating_sub(4);
+                    let mut src_text = text.clone();
                     if src_text.len() > display_width {
                         src_text.truncate(display_width.saturating_sub(3));
                         src_text.push_str("...");
                     }
-                    source_lines.push(format!("  {} {}", "▶ ".color(color).bold(), src_text.color(color)));
+                    format!("  {} {}", "▶ ".color(color).bold(), src_text.color(color))
                 } else {
-                     source_lines.push(format!("  {} {}", "▶ ".color(color).bold(), "?".color(color)));
+                    format!("  {} {}", "▶ ".color(color).bold(), "?".color(color))
                 }
-            }
+            } else {
+                String::new() // No source text if no source location
+            };
 
-            // --- Assembly Side --- multiple lines for this group
+            // --- Assembly Lines --- (all lines for this source group)
             let asm_lines: Vec<String> = group
                 .iter()
                 .map(|item| format_asm_line(item, self.show_bytes, color))
                 .collect();
 
             // --- Print Side by Side --- max of source vs asm lines
-            let max_len = std::cmp::max(source_lines.len(), asm_lines.len());
-            for k in 0..max_len {
-                let src_part = source_lines.get(k).cloned().unwrap_or_default();
-                let asm_part = asm_lines.get(k).cloned().unwrap_or_default();
+            for k in 0..asm_lines.len() {
+                let src_part = if k == 0 { &source_text } else { "" };
+                let asm_part = &asm_lines[k];
                 println!(
                     "{:<width$} {} {}",
                     src_part,
