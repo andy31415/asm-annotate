@@ -20,13 +20,14 @@ impl Renderer for UnifiedRenderer {
         for item in items {
             if item.is_new_line {
                 if item.is_new_file
-                    && let Some(ref src) = item.source {
-                        let short = short_path(&src.file, 3);
-                        println!(
-                            "  {}",
-                            format!("<{}:{}>", short, src.line).dimmed().italic()
-                        );
-                    }
+                    && let Some(ref src) = item.source
+                {
+                    let short = short_path(&src.file, 3);
+                    println!(
+                        "  {}",
+                        format!("<{}:{}>", short, src.line).dimmed().italic()
+                    );
+                }
                 if let Some(ref text) = item.source_text {
                     let marker = "▶ ";
                     println!(
@@ -38,7 +39,10 @@ impl Renderer for UnifiedRenderer {
                 }
             }
 
-            println!("{}", format_asm_line(item, self.show_bytes, item.color));
+            println!(
+                "{}",
+                format_asm_line(item, self.show_bytes, item.color, 120)
+            );
         }
         println!();
         Ok(())
@@ -48,6 +52,7 @@ impl Renderer for UnifiedRenderer {
 pub struct SplitRenderer {
     pub show_bytes: bool,
     pub source_width: usize,
+    pub asm_width: usize,
 }
 
 // Helper to strip ANSI escape codes
@@ -68,8 +73,8 @@ impl Renderer for SplitRenderer {
             let current_source = items[i].source.clone();
             let color = items[i].color;
             // --- File Header ---
-            if let Some(ref src) = current_source {
-                if last_file.as_ref() != Some(&src.file) {
+            if let Some(ref src) = current_source
+                && last_file.as_ref() != Some(&src.file) {
                     let short = short_path(&src.file, 3);
                     println!(
                         "
@@ -79,7 +84,6 @@ impl Renderer for SplitRenderer {
                     last_file = Some(src.file.clone());
                     last_line = None; // Reset line tracking when file changes
                 }
-            }
 
             let mut j = i;
             while j < items.len() && items[j].source == current_source {
@@ -109,7 +113,8 @@ impl Renderer for SplitRenderer {
                                 for (i, c) in text.char_indices() {
                                     let char_width =
                                         UnicodeWidthStr::width(c.encode_utf8(&mut [0u8; 4]));
-                                    if current_width + char_width > display_width.saturating_sub(3) {
+                                    if current_width + char_width > display_width.saturating_sub(3)
+                                    {
                                         truncate_at = i;
                                         break;
                                     }
@@ -144,7 +149,7 @@ impl Renderer for SplitRenderer {
             // --- Assembly Lines ---
             let asm_lines: Vec<String> = group
                 .iter()
-                .map(|item| format_asm_line(item, self.show_bytes, color))
+                .map(|item| format_asm_line(item, self.show_bytes, color, self.asm_width))
                 .collect();
 
             // --- Print Side by Side ---
@@ -168,20 +173,29 @@ impl Renderer for SplitRenderer {
     }
 }
 
-fn format_asm_line(item: &DisplayItem, show_bytes: bool, color: Color) -> String {
+fn format_asm_line(item: &DisplayItem, show_bytes: bool, color: Color, asm_width: usize) -> String {
     let inst = &item.instruction;
     let bytes_str = if show_bytes && !inst.bytes.is_empty() {
         format!("{:<16}  ", inst.bytes)
     } else {
         "".to_string()
     };
-    format!(
-        "    {:08x}  {}{}{}",
+    let mut asm_text = format!(
+        "    {:08x}  {}{}",
         inst.address,
         bytes_str.cyan().dimmed(),
         inst.mnemonic.color(color).bold(),
-        "".white() // Reset color
-    )
+    );
+
+    let visible_width = strip_ansi(&asm_text).width();
+    if visible_width > asm_width {
+        // Naive truncation for now, could be smarter about unicode
+        let mut truncated = strip_ansi(&asm_text);
+        truncated.truncate(asm_width.saturating_sub(1));
+        asm_text = format!("{}…", truncated.color(color).bold());
+    }
+
+    format!("{}{}", asm_text, "".white()) // Reset color
 }
 fn render_header(func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
     let total_insns = items.len();

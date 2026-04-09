@@ -103,11 +103,19 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     if instructions.is_empty() {
         eprintln!("Warning: No instructions found in range.");
     }
-
     // 4. Demangle names
     let final_func_name = if !args.no_demangle {
-        let names_to_demangle = vec![selected_function.name.clone()];
-        // TODO: Extract potential mangled names from instruction operands
+        let mut names_to_demangle = vec![selected_function.name.clone()];
+
+        // Extract potential mangled names from instruction operands
+        let mangled_regex = regex::Regex::new(r"_Z\\S+").unwrap();
+        for inst in &instructions {
+            for cap in mangled_regex.captures_iter(&inst.mnemonic) {
+                names_to_demangle.push(cap[0].to_string());
+            }
+        }
+        names_to_demangle.sort();
+        names_to_demangle.dedup();
 
         let demangled_map = demangler_backend.demangle_batch(&names_to_demangle)?;
         crate::backends::disasm::apply_demangling(
@@ -136,12 +144,14 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         Box::new(SplitRenderer {
             show_bytes: args.bytes,
             source_width,
+            asm_width: 100, // TODO: Calculate from terminal width
         })
     } else {
         // Default to split
         Box::new(SplitRenderer {
             show_bytes: args.bytes,
             source_width: 80,
+            asm_width: 100, // TODO: Calculate from terminal width
         })
     };
 
