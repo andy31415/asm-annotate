@@ -1,5 +1,4 @@
 use color_eyre::eyre::{Context, Result};
-use log;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -12,7 +11,7 @@ pub struct SourceReader {
 impl SourceReader {
     pub fn new(remaps: &Vec<String>) -> Result<Self> {
         let mut remappings = Vec::new();
-        if remaps.len() % 2 != 0 {
+        if !remaps.len().is_multiple_of(2) {
             return Err(color_eyre::eyre::eyre!(
                 "Invalid remap arguments: must be pairs of OLD NEW"
             ));

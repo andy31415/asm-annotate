@@ -14,12 +14,11 @@ pub fn render_unified(
 
     for item in items {
         if item.is_new_line {
-            if item.is_new_file {
-                if let Some(ref src) = item.source {
+            if item.is_new_file
+                && let Some(ref src) = item.source {
                     let short = short_path(&src.file, 3);
                     println!("  {}", format!("{}:{}", short, src.line).dimmed().italic());
                 }
-            }
             if let Some(ref text) = item.source_text {
                 let marker = "▶ ";
                 println!(
