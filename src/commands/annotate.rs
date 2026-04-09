@@ -4,7 +4,7 @@ use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::AnnotateArgs;
 use crate::source_reader::SourceReader;
 use crate::types::{AnnotatedInstruction, DisplayItem};
-use color_eyre::eyre::{eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use log::info;
 
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
@@ -62,8 +62,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
 
     info!(
         "Selected function: {} at {:#x}",
-        display_name,
-        selected_function.addr
+        display_name, selected_function.addr
     );
 
     let (start_addr, end_addr) = elf_backend

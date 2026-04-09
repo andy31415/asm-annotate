@@ -1,7 +1,7 @@
 use crate::backends::disasm::Instruction;
 use crate::source_reader::SourceReader;
-use std::collections::HashMap;
 use colored::*;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceLocation {

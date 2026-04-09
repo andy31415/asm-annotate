@@ -1,8 +1,8 @@
-use crate::types::DisplayItem;
 use crate::backends::disasm::Instruction;
+use crate::types::DisplayItem;
 use colored::*;
-use std::path::{Path, PathBuf};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 // Basic unified renderer
 pub fn render_unified(
