@@ -1,18 +1,19 @@
 use crate::backends::elf::FunctionInfo;
+use crate::backends::demangle::DemanglerBackend;
 use color_eyre::eyre::{Result, Context, eyre};
-use std::io::{Write, BufRead, BufReader};
+use std::io::{Write};
 use std::process::{Command, Stdio};
 
 pub trait PickerBackend {
-    fn pick_function(&self, functions: Vec<FunctionInfo>) -> Result<Option<FunctionInfo>>;
+    fn pick_function(&self, functions: Vec<FunctionInfo>, demangler: &impl DemanglerBackend) -> Result<Option<FunctionInfo>>;
 }
 
 pub struct SkimBackend;
 
 impl PickerBackend for SkimBackend {
-    fn pick_function(&self, functions: Vec<FunctionInfo>) -> Result<Option<FunctionInfo>> {
+    fn pick_function(&self, functions: Vec<FunctionInfo>, demangler: &impl DemanglerBackend) -> Result<Option<FunctionInfo>> {
         let mut skim_child = Command::new("sk")
-            .arg("-m") // Enable multi-select (though we only need one)
+            .arg("-m")
             .arg("--ansi")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -21,7 +22,13 @@ impl PickerBackend for SkimBackend {
 
         let stdin = skim_child.stdin.as_mut().unwrap();
         for func in &functions {
-            writeln!(stdin, "{:#x} {} ({})", func.addr, func.name, func.size)
+            let demangled = demangler.demangle(&func.name).unwrap_or_else(|_| func.name.clone());
+            let display_name = if demangled != func.name {
+                format!("{}  [{}]", demangled, func.name)
+            } else {
+                func.name.clone()
+            };
+            writeln!(stdin, "{} ({}) {:#x}", display_name, func.size, func.addr)
                 .wrap_err("Failed to write to skim stdin")?;
         }
 
@@ -36,21 +43,19 @@ impl PickerBackend for SkimBackend {
 
         match selected_line {
             Some(line) => {
-                // Expected format: "0xADDR NAME (SIZE)"
-                let parts: Vec<&str> = line.splitn(3, ' ').collect();
-                if parts.len() < 2 {
-                    return Err(eyre!("Skim output format unexpected: {}", line));
-                }
-                let addr_str = parts[0];
-                let name = parts[1];
+                // Expected format: "DISPLAY NAME (SIZE) 0xADDR"
+                let Some(addr_str) = line.rsplit(' ').next() else {
+                    return Err(eyre!("Skim output format unexpected (no address found): {}", line));
+                };
 
-                let addr = u64::from_str_radix(addr_str.trim_start_matches("0x"), 16)
-                    .wrap_err(format!("Failed to parse address from skim: {}", addr_str))?;
+                let Ok(addr) = u64::from_str_radix(addr_str.trim_start_matches("0x"), 16) else {
+                    return Err(eyre!("Failed to parse address from skim: {}", addr_str));
+                };
 
                 functions.into_iter()
-                    .find(|f| f.addr == addr && f.name == name)
+                    .find(|f| f.addr == addr)
                     .map(Some)
-                    .ok_or_else(|| eyre!("Selected function not found in original list"))
+                    .ok_or_else(|| eyre!("Selected function address not found in original list: {:#x}", addr))
             }
             None => Ok(None), // No selection made
         }

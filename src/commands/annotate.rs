@@ -1,11 +1,13 @@
 use crate::cli::AnnotateArgs;
 use crate::backends::elf::{ElfBackend, GoblinElfBackend, FunctionInfo};
 use crate::backends::picker::{PickerBackend, SkimBackend};
+use crate::backends::demangle::{DemanglerBackend, CppDemangleBackend};
 use color_eyre::eyre::{Result, Context, eyre};
 use log::info;
 
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let elf_backend = GoblinElfBackend;
+    let demangler_backend = CppDemangleBackend;
 
     let functions = elf_backend.list_functions(&args.elf)
         .wrap_err("Failed to list functions")?;
@@ -34,12 +36,19 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         _ => {
             info!("Multiple functions match '{}'. Please choose one:", function_name);
             let picker_backend = SkimBackend;
-            picker_backend.pick_function(matched_functions)?
+            picker_backend.pick_function(matched_functions, &demangler_backend)?
                 .ok_or_else(|| eyre!("No function selected from picker."))?
         }
     };
 
-    info!("Selected function: {} at {:#x}", selected_function.name, selected_function.addr);
+    // Demangle the selected function name for display if not already done
+    let display_name = if !args.no_demangle {
+        demangler_backend.demangle(&selected_function.name).unwrap_or_else(|_| selected_function.name.clone())
+    } else {
+        selected_function.name.clone()
+    };
+
+    info!("Selected function: {} at {:#x}", display_name, selected_function.addr);
 
     // TODO: Implement the rest of the annotation logic
     // 1. Get function bounds
