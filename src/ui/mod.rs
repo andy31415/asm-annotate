@@ -1,58 +1,75 @@
 use crate::backends::disasm::Instruction;
 use crate::types::DisplayItem;
 use colored::*;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-// Basic unified renderer
-pub fn render_unified(
-    func_name: &str,
-    items: &[DisplayItem],
-    show_bytes: bool,
-) -> color_eyre::Result<()> {
-    render_header(func_name, items)?;
+pub trait Renderer {
+    fn render(&self, func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()>;
+}
 
-    for item in items {
-        if item.is_new_line {
-            if item.is_new_file
-                && let Some(ref src) = item.source {
-                    let short = short_path(&src.file, 3);
-                    println!("  {}", format!("{}:{}", short, src.line).dimmed().italic());
+pub struct UnifiedRenderer {
+    pub show_bytes: bool,
+}
+
+impl Renderer for UnifiedRenderer {
+    fn render(&self, func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
+        render_header(func_name, items)?;
+
+        for item in items {
+            if item.is_new_line {
+                if item.is_new_file {
+                    if let Some(ref src) = item.source {
+                        let short = short_path(&src.file, 3);
+                        println!("  {}", format!("{}:{}", short, src.line).dimmed().italic());
+                    }
                 }
-            if let Some(ref text) = item.source_text {
-                let marker = "▶ ";
-                println!(
-                    "  {}{}{}",
-                    marker.color(item.color).bold(),
-                    text.color(item.color),
-                    "".white() // Reset color
-                );
+                if let Some(ref text) = item.source_text {
+                    let marker = "▶ ";
+                    println!(
+                        "  {}{}{}",
+                        marker.color(item.color).bold(),
+                        text.color(item.color),
+                        "".white() // Reset color
+                    );
+                }
             }
+
+            let inst = &item.instruction;
+            let bytes_str = if self.show_bytes && !inst.bytes.is_empty() {
+                format!("{:<24}  ", inst.bytes)
+            } else {
+                "".to_string()
+            };
+            let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
+            let mnem_word = parts.first().unwrap_or(&"");
+            let operands = parts.get(1).unwrap_or(&"");
+
+            println!(
+                "    {:08x}  {}{:<10}{}{}",
+                inst.address,
+                bytes_str.cyan().dimmed(),
+                mnem_word.color(item.color).bold(),
+                operands.color(item.color),
+                "".white() // Reset color
+            );
         }
-
-        let inst = &item.instruction;
-        let bytes_str = if show_bytes && !inst.bytes.is_empty() {
-            format!("{:<24}  ", inst.bytes)
-        } else {
-            "".to_string()
-        };
-        let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
-        let mnem_word = parts.first().unwrap_or(&"");
-        let operands = parts.get(1).unwrap_or(&"");
-
-        println!(
-            "    {:08x}  {}{:<10}{}{}",
-            inst.address,
-            bytes_str.cyan().dimmed(),
-            mnem_word.color(item.color).bold(),
-            operands.color(item.color),
-            "".white() // Reset color
-        );
+        println!();
+        Ok(())
     }
+}
 
-    // TODO: Add render_stats_table if stats are enabled
-    println!();
-    Ok(())
+pub struct SplitRenderer {
+    pub show_bytes: bool,
+    pub source_width: usize,
+}
+
+impl Renderer for SplitRenderer {
+    fn render(&self, func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
+        render_header(func_name, items)?;
+        println!("SplitRenderer not yet implemented. {} items to render.", items.len());
+        // TODO: Implement split rendering
+        Ok(())
+    }
 }
 
 // Helper to render the function header
@@ -90,11 +107,6 @@ fn short_path(path_str: &str, depth: usize) -> String {
     } else {
         path_str.to_string()
     }
-}
-
-// TODO: Implement render_split
-pub fn render_split() -> color_eyre::Result<()> {
-    Ok(())
 }
 
 // TODO: Implement render_stats_table
