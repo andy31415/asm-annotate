@@ -1,4 +1,5 @@
 use crate::backends::disasm::Instruction;
+use crate::source_reader::SourceReader;
 use std::collections::HashMap;
 use colored::*;
 
@@ -42,7 +43,7 @@ pub struct DisplayItem {
 impl DisplayItem {
     pub fn from_annotated(
         annotated_instructions: &[AnnotatedInstruction],
-        // remappings: &[(String, String)], // TODO: Add remappings
+        source_reader: &SourceReader,
     ) -> color_eyre::Result<Vec<DisplayItem>> {
         let mut display_items = Vec::new();
         let mut color_map: HashMap<SourceLocation, Color> = HashMap::new();
@@ -71,8 +72,7 @@ impl DisplayItem {
             }
 
             let source_text = if let Some(ref src) = ai.source {
-                // TODO: Actually read the source file and line
-                Some(format!("{}:{}", src.file, src.line))
+                source_reader.read_line(&src.file, src.line)?
             } else {
                 None
             };

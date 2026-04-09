@@ -2,6 +2,7 @@ use crate::backends::demangle::{CppDemangleBackend, DemanglerBackend};
 use crate::backends::elf::{ElfBackend, FunctionInfo, GoblinElfBackend};
 use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::AnnotateArgs;
+use crate::source_reader::SourceReader;
 use crate::types::{AnnotatedInstruction, DisplayItem};
 use color_eyre::eyre::{eyre, Context, Result};
 use log::info;
@@ -9,6 +10,7 @@ use log::info;
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let elf_backend = GoblinElfBackend;
     let demangler_backend = CppDemangleBackend;
+    let source_reader = SourceReader::new(&args.remap)?;
 
     let functions = elf_backend
         .list_functions(&args.elf)
@@ -121,7 +123,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let annotated_instructions = AnnotatedInstruction::from_many(&instructions, &addr_to_src);
 
     // 6. Prepare for Display
-    let display_items = DisplayItem::from_annotated(&annotated_instructions)?;
+    let display_items = DisplayItem::from_annotated(&annotated_instructions, &source_reader)?;
 
     // 7. Render output
     crate::ui::render_unified(&final_func_name, &display_items, args.bytes)?;

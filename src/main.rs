@@ -7,6 +7,7 @@ use log::{debug, info};
 mod backends;
 mod cli;
 mod commands;
+mod source_reader;
 mod types;
 mod ui;
 
