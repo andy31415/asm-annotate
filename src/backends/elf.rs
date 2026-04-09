@@ -142,6 +142,7 @@ impl ElfBackend for GoblinElfBackend {
             }
         }
 
+        // In python, dynsyms are only added if not already present in syms.
         for sym in elf.dynsyms.iter() {
             if sym.st_type() == elf::sym::STT_FUNC
                 && sym.st_size > 0
@@ -166,6 +167,7 @@ impl ElfBackend for GoblinElfBackend {
         let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
         let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
 
+        // Prioritize symbols from the main symbol table
         for sym in elf.syms.iter() {
             if sym.st_type() == elf::sym::STT_FUNC
                 && let Some(name) = elf.strtab.get_at(sym.st_name)
@@ -176,12 +178,13 @@ impl ElfBackend for GoblinElfBackend {
             }
         }
 
+        // Fallback to dynamic symbols
         for sym in elf.dynsyms.iter() {
             if sym.st_type() == elf::sym::STT_FUNC
                 && let Some(name) = elf.dynstrtab.get_at(sym.st_name)
                 && name == func_name
             {
-                let start = sym.st_value & !1; // Clear Thub bit
+                let start = sym.st_value & !1; // Clear Thumb bit
                 return Ok((start, start + sym.st_size));
             }
         }
