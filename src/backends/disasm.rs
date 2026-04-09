@@ -131,18 +131,6 @@ pub fn disassemble_range(
     ))
 }
 
-pub fn demangle_batch(names: Vec<String>) -> HashMap<String, String> {
-    let mut demangled_map = HashMap::new();
-    for name in names {
-        if let Ok(symbol) = cpp_demangle::Symbol::new(name.as_bytes())
-            && let Ok(demangled) = symbol.demangle(&DemangleOptions::default())
-        {
-            demangled_map.insert(name, demangled);
-        }
-    }
-    demangled_map
-}
-
 /// Applies demangled names to a function name and its instructions.
 pub fn apply_demangling(
     func_name: String,

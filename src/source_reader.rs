@@ -9,7 +9,7 @@ pub struct SourceReader {
 }
 
 impl SourceReader {
-    pub fn new(remaps: &Vec<String>) -> Result<Self> {
+    pub fn new(remaps: &[String]) -> Result<Self> {
         let mut remappings = Vec::new();
         if !remaps.len().is_multiple_of(2) {
             return Err(color_eyre::eyre::eyre!(

@@ -170,9 +170,9 @@ impl Renderer for SplitRenderer {
                 .collect();
 
             // --- Print Side by Side ---
-            for k in 0..asm_lines.len() {
+            for (k, asm_line) in asm_lines.iter().enumerate() {
                 let src_part = if k == 0 { &source_text } else { "" };
-                let asm_part = &asm_lines[k];
+                let asm_part = asm_line;
 
                 let stripped_src = strip_ansi(src_part);
                 let src_part_width = stripped_src.width();
@@ -241,8 +241,8 @@ fn short_path(path_str: &str, depth: usize) -> String {
     if components.len() > depth {
         let start_index = components.len() - depth;
         let mut result = PathBuf::from("…");
-        for i in start_index..components.len() {
-            result.push(components[i]);
+        for component in components.iter().skip(start_index) {
+            result.push(component);
         }
         result.to_string_lossy().to_string()
     } else {
