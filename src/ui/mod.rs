@@ -1,5 +1,5 @@
 use crate::backends::disasm::Instruction;
-use crate::types::DisplayItem;
+use crate::types::{DisplayItem, SourceLocation};
 use colored::*;
 use std::path::{Path, PathBuf};
 
@@ -20,7 +20,7 @@ impl Renderer for UnifiedRenderer {
                 if item.is_new_file {
                     if let Some(ref src) = item.source {
                         let short = short_path(&src.file, 3);
-                        println!("  {}", format!("{}:{}", short, src.line).dimmed().italic());
+                        println!("  {}", format!("<{}:{}>", short, src.line).dimmed().italic());
                     }
                 }
                 if let Some(ref text) = item.source_text {
@@ -34,24 +34,7 @@ impl Renderer for UnifiedRenderer {
                 }
             }
 
-            let inst = &item.instruction;
-            let bytes_str = if self.show_bytes && !inst.bytes.is_empty() {
-                format!("{:<24}  ", inst.bytes)
-            } else {
-                "".to_string()
-            };
-            let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
-            let mnem_word = parts.first().unwrap_or(&"");
-            let operands = parts.get(1).unwrap_or(&"");
-
-            println!(
-                "    {:08x}  {}{:<10}{}{}",
-                inst.address,
-                bytes_str.cyan().dimmed(),
-                mnem_word.color(item.color).bold(),
-                operands.color(item.color),
-                "".white() // Reset color
-            );
+            println!("{}", format_asm_line(item, self.show_bytes, item.color));
         }
         println!();
         Ok(())
@@ -66,10 +49,84 @@ pub struct SplitRenderer {
 impl Renderer for SplitRenderer {
     fn render(&self, func_name: &str, items: &[DisplayItem]) -> color_eyre::Result<()> {
         render_header(func_name, items)?;
-        println!("SplitRenderer not yet implemented. {} items to render.", items.len());
-        // TODO: Implement split rendering
+
+        let mut i = 0;
+        while i < items.len() {
+            let current_source = items[i].source.clone();
+            let color = items[i].color;
+
+            let mut j = i;
+            while j < items.len() && items[j].source == current_source {
+                j += 1;
+            }
+            let group = &items[i..j];
+
+            // --- Source Side --- multiplce lines for this group
+            let mut source_lines: Vec<String> = Vec::new();
+            if let Some(ref src) = current_source {
+                if items[i].is_new_file {
+                    let short = short_path(&src.file, 3);
+                    source_lines.push(format!("  {}", format!("<{}:{}>", short, src.line).dimmed().italic()));
+                }
+                if let Some(ref text) = items[i].source_text {
+                     let display_width = self.source_width.saturating_sub(4);
+                     let mut src_text = text.clone();
+                    if src_text.len() > display_width {
+                        src_text.truncate(display_width.saturating_sub(3));
+                        src_text.push_str("...");
+                    }
+                    source_lines.push(format!("  {} {}", "▶ ".color(color).bold(), src_text.color(color)));
+                } else {
+                     source_lines.push(format!("  {} {}", "▶ ".color(color).bold(), "?".color(color)));
+                }
+            }
+
+            // --- Assembly Side --- multiple lines for this group
+            let asm_lines: Vec<String> = group
+                .iter()
+                .map(|item| format_asm_line(item, self.show_bytes, color))
+                .collect();
+
+            // --- Print Side by Side --- max of source vs asm lines
+            let max_len = std::cmp::max(source_lines.len(), asm_lines.len());
+            for k in 0..max_len {
+                let src_part = source_lines.get(k).cloned().unwrap_or_default();
+                let asm_part = asm_lines.get(k).cloned().unwrap_or_default();
+                println!(
+                    "{:<width$} {} {}",
+                    src_part,
+                    "|".dimmed(),
+                    asm_part,
+                    width = self.source_width
+                );
+            }
+
+            i = j;
+        }
+        println!();
         Ok(())
     }
+}
+
+fn format_asm_line(item: &DisplayItem, show_bytes: bool, color: Color) -> String {
+    let inst = &item.instruction;
+    let bytes_str = if show_bytes && !inst.bytes.is_empty() {
+        format!("{:<16}  ", inst.bytes)
+    } else {
+        "".to_string()
+    };
+    let parts: Vec<&str> = inst.mnemonic.splitn(2, ' ').collect();
+    let mnem_word = parts.first().unwrap_or(&"");
+    let operands = parts.get(1).unwrap_or(&"");
+
+    format!(
+        "    {:08x}  {}{:<8}{}{}",
+        inst.address,
+        bytes_str.cyan().dimmed(),
+        mnem_word.color(color).bold(),
+        operands.color(color),
+        "".white() // Reset color
+    )
 }
 
 // Helper to render the function header
