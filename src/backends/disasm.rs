@@ -37,21 +37,12 @@ pub fn disassemble_range(
     // let (arch, mode) = get_arch_mode(&elf_file)?;
 
     let cs = match elf_file.ehdr.machine {
-        // elf::abi::EM_X86_64 => Capstone::new().x86(),
-        // elf::abi::EM_ARM => Capstone::new().arm(),
-        elf::abi::EM_AARCH64 => Capstone::new().arm64(),
-        _ => {
-            return Err(color_eyre::eyre::eyre!(
-                "Unsupported architecture: {:#x}",
-                elf_file.ehdr.machine
-            ));
-        }
-    };
-
-    let cs = cs
-        .detail(true)
-        .build()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize Capstone: {}", e))?;
+        elf::abi::EM_X86_64 => Capstone::new().x86().detail(true).build(),
+        elf::abi::EM_ARM => Capstone::new().arm().detail(true).build(),
+        elf::abi::EM_AARCH64 => Capstone::new().arm64().detail(true).build(),
+        _ => Err(capstone::Error::CustomError("Unsupported architecture")),
+    }
+    .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize Capstone: {}", e))?;
 
     // Find the section containing the range [start, end)
     let mut section_data = None;
