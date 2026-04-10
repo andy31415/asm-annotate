@@ -1,21 +1,7 @@
 use crate::backends::disasm::Instruction;
+use crate::ui::colors::UI_PALETTE;
 use colored::*;
 use std::collections::HashMap;
-
-const UI_PALETTE: &[Color] = &[
-    Color::Red,
-    Color::Green,
-    Color::Yellow,
-    Color::Blue,
-    Color::Magenta,
-    Color::Cyan,
-    Color::BrightRed,
-    Color::BrightGreen,
-    Color::BrightYellow,
-    Color::BrightBlue,
-    Color::BrightMagenta,
-    Color::BrightCyan,
-];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceLocation {

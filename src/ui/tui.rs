@@ -11,7 +11,7 @@ use log::error;
 use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -191,15 +191,9 @@ impl AppState {
         match self.active_pane {
             ActivePane::Source => {
                 self.source_scroll = self.source_scroll.saturating_add(amount);
-                if self.source_scroll >= self.source_lines.len() as u16 {
-                    self.source_scroll = self.source_lines.len().saturating_sub(1) as u16;
-                }
             }
             ActivePane::Assembly => {
                 self.asm_scroll = self.asm_scroll.saturating_add(amount);
-                if self.asm_scroll >= self.asm_lines.len() as u16 {
-                    self.asm_scroll = self.asm_lines.len().saturating_sub(1) as u16;
-                }
             }
         }
     }
@@ -257,11 +251,16 @@ fn run_app<B: Backend>(
                 .constraints([Constraint::Length(1), Constraint::Min(0)].as_ref())
                 .split(f.size());
 
-            let title_text = format!("Annotating Function: {}", func_name);
-            let title_paragraph = Paragraph::new(Line::from(Span::styled(
-                title_text,
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
+            let title_line = Line::from(vec![
+                Span::raw("Annotating Function: "),
+                Span::styled(
+                    func_name,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]);
+            let title_paragraph = Paragraph::new(title_line).alignment(Alignment::Center);
             f.render_widget(title_paragraph, chunks[0]);
 
             let content_chunks = Layout::default()
@@ -349,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_short_path_shorter_than_depth() {
-        // Fewer components than depth — returned as-is
+        // Fewer components than depth - returned as-is
         assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
         assert_eq!(short_path("short.c", 3), "short.c");
     }
