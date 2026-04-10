@@ -1,6 +1,5 @@
 use crate::backends::elf::{ElfBackend, GoblinElfBackend};
 use color_eyre::eyre::Result;
-use std::collections::HashMap;
 use std::{fs, path::Path};
 
 use capstone::{Capstone, Insn, arch::BuildsCapstone};
@@ -170,66 +169,8 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
     Ok(instructions)
 }
 
-/// Applies demangled names to a function name and its instructions.
-pub fn apply_demangling(
-    func_name: String,
-    instructions: &mut [Instruction],
-    demangled_map: &HashMap<String, String>,
-) -> String {
-    let new_func_name = demangled_map.get(&func_name).unwrap_or(&func_name).clone();
-
-    for inst in instructions {
-        let mut new_mnemonic = inst.mnemonic.clone();
-        for (mangled, demangled) in demangled_map {
-            if new_mnemonic.contains(mangled) {
-                new_mnemonic = new_mnemonic.replace(mangled, demangled);
-            }
-        }
-        inst.mnemonic = new_mnemonic;
-    }
-
-    new_func_name
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    #[test]
-    fn test_apply_demangling() {
-        let mut instructions = vec![
-            Instruction {
-                address: 0x1000,
-                bytes: "C3".to_string(),
-                mnemonic: "ret".to_string(),
-            },
-            Instruction {
-                address: 0x1001,
-                bytes: "E8 00000000".to_string(),
-                mnemonic: "call _Z3foov".to_string(),
-            },
-        ];
-        let mut demangled_map = HashMap::new();
-        demangled_map.insert("_Z3foov".to_string(), "foo()".to_string());
-        demangled_map.insert("_Z3bariz".to_string(), "bar(int, ...)".to_string());
-
-        let new_func_name =
-            apply_demangling("_Z3bariz".to_string(), &mut instructions, &demangled_map);
-
-        assert_eq!(new_func_name, "bar(int, ...)");
-        assert_eq!(instructions[0].mnemonic, "ret");
-        assert_eq!(instructions[1].mnemonic, "call foo()");
-    }
-
-    #[test]
-    fn test_apply_demangling_unknown_func() {
-        let mut instructions = vec![];
-        let demangled_map = HashMap::new();
-        // Function name not in map → returned unchanged
-        let name = apply_demangling("plain_func".to_string(), &mut instructions, &demangled_map);
-        assert_eq!(name, "plain_func");
-    }
 
     // TODO: Add tests for disassemble_range with a test ELF file
 }

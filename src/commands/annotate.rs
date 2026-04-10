@@ -126,7 +126,6 @@ pub fn handle_annotate(args: &Cli) -> Result<()> {
 pub struct AnnotationData {
     pub display_items: Vec<DisplayItem>,
     pub source_reader: SourceReader,
-    pub final_func_name: String,
     pub display_name: String,
 }
 
@@ -173,11 +172,10 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
         );
     }
 
-    let mut instructions =
-        match crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr) {
-            Ok(inst) => inst,
-            Err(e) => return Err(eyre!("Failed to disassemble: {}", e)),
-        };
+    let instructions = match crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr) {
+        Ok(inst) => inst,
+        Err(e) => return Err(eyre!("Failed to disassemble: {}", e)),
+    };
 
     if instructions.is_empty() {
         warn!("No instructions found in range.");
@@ -185,34 +183,12 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
         info!("Disassembled {} instructions.", instructions.len());
     }
 
-    let final_func_name = if !args.no_demangle {
-        let mut names_to_demangle = vec![func_name.to_string()];
-        let mangled_regex = regex::Regex::new(r"_Z[a-zA-Z0-9_]+").unwrap();
-        for inst in &instructions {
-            for cap in mangled_regex.captures_iter(&inst.mnemonic) {
-                names_to_demangle.push(cap[0].to_string());
-            }
-        }
-        names_to_demangle.sort();
-        names_to_demangle.dedup();
-
-        let demangled_map = demangler_backend.demangle_batch(&names_to_demangle)?;
-        crate::backends::disasm::apply_demangling(
-            func_name.to_string(),
-            &mut instructions,
-            &demangled_map,
-        )
-    } else {
-        func_name.to_string()
-    };
-
     let annotated_instructions = AnnotatedInstruction::from_many(&instructions, &addr_to_src);
     let display_items = DisplayItem::from_annotated(&annotated_instructions)?;
 
     Ok(AnnotationData {
         display_items,
         source_reader,
-        final_func_name,
         display_name,
     })
 }
