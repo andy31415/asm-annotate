@@ -11,10 +11,10 @@ use log::error;
 use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -55,6 +55,7 @@ struct AppState {
     source_scroll: u16,
     asm_scroll: u16,
     left_pane_width: u16, // Percentage
+    show_help: bool,
 }
 
 impl AppState {
@@ -186,6 +187,7 @@ impl AppState {
             source_scroll: 0,
             asm_scroll: 0,
             left_pane_width: 50,
+            show_help: false,
         }
     }
 
@@ -248,10 +250,11 @@ fn run_app<B: Backend>(
 ) -> Result<()> {
     loop {
         terminal.draw(|f| {
+            let size = f.size();
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(1), Constraint::Min(0)].as_ref())
-                .split(f.size());
+                .split(size);
 
             let title_line = Line::from(vec![
                 Span::raw("Annotating Function: "),
@@ -273,12 +276,12 @@ fn run_app<B: Backend>(
                 ].as_ref())
                 .split(chunks[1]);
 
-            let source_border_style = if app_state.active_pane == ActivePane::Source {
+            let source_border_style = if app_state.active_pane == ActivePane::Source && !app_state.show_help {
                 Style::default().fg(Color::Yellow)
             } else {
                 Style::default()
             };
-            let asm_border_style = if app_state.active_pane == ActivePane::Assembly {
+            let asm_border_style = if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
                 Style::default().fg(Color::Yellow)
             } else {
                 Style::default()
@@ -303,38 +306,96 @@ fn run_app<B: Backend>(
                 )
                 .scroll((app_state.asm_scroll, 0));
             f.render_widget(right_pane, content_chunks[1]);
+
+            if app_state.show_help {
+                let help_text = Text::from(vec![
+                    Line::from(Span::styled("Keybindings", Style::default().add_modifier(Modifier::BOLD))),
+                    Line::from(""),
+                    Line::from("? / Esc: Toggle Help"),
+                    Line::from("q: Quit"),
+                    Line::from("j / Down: Scroll Down"),
+                    Line::from("k / Up: Scroll Up"),
+                    Line::from("h / Left: Activate Source Pane"),
+                    Line::from("l / Right: Activate Assembly Pane"),
+                    Line::from("PgDown / Ctrl+D: Page Down"),
+                    Line::from("PgUp / Ctrl+U: Page Up"),
+                    Line::from("Shift + Left / H: Decrease Source Pane Width"),
+                    Line::from("Shift + Right / L: Increase Source Pane Width"),
+                ]);
+                let block = Block::default()
+                    .title(" Help ")
+                    .borders(Borders::ALL)
+                    .style(Style::default().fg(Color::White).bg(Color::DarkGray));
+
+                let area = centered_rect(60, 16, size);
+                let help_paragraph = Paragraph::new(help_text).block(block).alignment(Alignment::Left);
+                f.render_widget(Clear, area);
+                f.render_widget(help_paragraph, area);
+            }
         })?;
 
         if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('q') => return Ok(()),
-                KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
-                    app_state.active_pane = ActivePane::Source;
+            if app_state.show_help {
+                match key.code {
+                    KeyCode::Char('?') | KeyCode::Esc => {
+                        app_state.show_help = false;
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('l') | KeyCode::Right if key.modifiers.is_empty() => {
-                    app_state.active_pane = ActivePane::Assembly;
+            } else {
+                match key.code {
+                    KeyCode::Char('?') => {
+                        app_state.show_help = true;
+                    }
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
+                        app_state.active_pane = ActivePane::Source;
+                    }
+                    KeyCode::Char('l') | KeyCode::Right if key.modifiers.is_empty() => {
+                        app_state.active_pane = ActivePane::Assembly;
+                    }
+                    KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                        app_state.left_pane_width = app_state.left_pane_width.saturating_sub(5).max(10);
+                    }
+                    KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                        app_state.left_pane_width = app_state.left_pane_width.saturating_add(5).min(90);
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => app_state.scroll_down(1),
+                    KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
+                    KeyCode::PageDown => app_state.scroll_down(PAGE_AMOUNT),
+                    KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
+                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app_state.scroll_down(PAGE_AMOUNT);
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app_state.scroll_up(PAGE_AMOUNT);
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                    app_state.left_pane_width = app_state.left_pane_width.saturating_sub(5).max(10);
-                }
-                KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                    app_state.left_pane_width = app_state.left_pane_width.saturating_add(5).min(90);
-                }
-                KeyCode::Char('j') | KeyCode::Down => app_state.scroll_down(1),
-
-                KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
-                KeyCode::PageDown => app_state.scroll_down(PAGE_AMOUNT),
-                KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    app_state.scroll_down(PAGE_AMOUNT);
-                }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    app_state.scroll_up(PAGE_AMOUNT);
-                }
-                _ => {}
             }
         }
     }
+}
+
+/// Helper function to create a centered rectangle.
+fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Length(height),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 // Helper to shorten paths
