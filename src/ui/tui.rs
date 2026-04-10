@@ -6,15 +6,15 @@ use colored::Color as ColoredColor;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Terminal,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -72,9 +72,7 @@ impl AppState {
                     Span::raw(format!("    {:08x}  ", item.instruction.address)),
                     Span::styled(
                         bytes_str,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::DIM),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
                     ),
                     Span::styled(
                         item.instruction.mnemonic.clone(),
@@ -159,10 +157,7 @@ impl AppState {
 
                     let styled_content = if is_main {
                         Line::from(vec![
-                            Span::styled(
-                                line_num_str,
-                                base_style.add_modifier(Modifier::BOLD),
-                            ),
+                            Span::styled(line_num_str, base_style.add_modifier(Modifier::BOLD)),
                             Span::styled("▶ ", base_style.add_modifier(Modifier::BOLD)),
                             Span::styled(line_content, base_style),
                         ])
@@ -173,10 +168,7 @@ impl AppState {
                                 Style::default().add_modifier(Modifier::DIM),
                             ),
                             Span::raw("    "),
-                            Span::styled(
-                                line_content,
-                                Style::default().fg(Color::DarkGray),
-                            ),
+                            Span::styled(line_content, Style::default().fg(Color::DarkGray)),
                         ])
                     };
                     source_lines.push(styled_content);
@@ -223,11 +215,7 @@ impl AppState {
     }
 }
 
-pub fn run_tui(
-    func_name: &str,
-    items: &[DisplayItem],
-    source_reader: &SourceReader,
-) -> Result<()> {
+pub fn run_tui(func_name: &str, items: &[DisplayItem], source_reader: &SourceReader) -> Result<()> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -256,14 +244,18 @@ pub fn run_tui(
 
 const PAGE_AMOUNT: u16 = 15;
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, func_name: &str, mut app_state: AppState) -> Result<()> {
+fn run_app<B: Backend>(
+    terminal: &mut Terminal<B>,
+    func_name: &str,
+    mut app_state: AppState,
+) -> Result<()> {
     loop {
         terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(1), Constraint::Min(0)].as_ref())
                 .split(f.size());
-            
+
             let title_text = format!("Annotating Function: {}", func_name);
             let title_paragraph = Paragraph::new(Line::from(Span::styled(
                 title_text,
@@ -288,12 +280,22 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, func_name: &str, mut app_stat
             };
 
             let left_pane = Paragraph::new(app_state.source_lines.clone())
-                .block(Block::default().borders(Borders::ALL).title("Source").border_style(source_border_style))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Source")
+                        .border_style(source_border_style),
+                )
                 .scroll((app_state.source_scroll, 0));
             f.render_widget(left_pane, content_chunks[0]);
 
             let right_pane = Paragraph::new(app_state.asm_lines.clone())
-                .block(Block::default().borders(Borders::ALL).title("Assembly").border_style(asm_border_style))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Assembly")
+                        .border_style(asm_border_style),
+                )
                 .scroll((app_state.asm_scroll, 0));
             f.render_widget(right_pane, content_chunks[1]);
         })?;

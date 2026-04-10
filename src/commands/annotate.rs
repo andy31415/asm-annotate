@@ -104,12 +104,9 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     }
 
     // 3. Disassemble range
-    let mut instructions = crate::backends::disasm::disassemble_range(
-        &args.elf,
-        start_addr,
-        end_addr,
-    )
-    .wrap_err("Failed to disassemble")?;
+    let mut instructions =
+        crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr)
+            .wrap_err("Failed to disassemble")?;
     if instructions.is_empty() {
         eprintln!("Warning: No instructions found in range.");
     }

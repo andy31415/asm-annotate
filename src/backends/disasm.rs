@@ -33,7 +33,7 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
                 }
             }
             if !is_thumb {
-                 for sym in elf_obj.dynsyms.iter() {
+                for sym in elf_obj.dynsyms.iter() {
                     if sym.st_type() == sym::STT_FUNC && (sym.st_value & !1) == start {
                         if (sym.st_value & 1) == 1 {
                             is_thumb = true;
@@ -48,11 +48,7 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
             } else {
                 capstone::arch::arm::ArchMode::Arm
             };
-            Capstone::new()
-                .arm()
-                .mode(mode)
-                .detail(true)
-                .build()
+            Capstone::new().arm().mode(mode).detail(true).build()
         }
         goblin::elf::header::EM_AARCH64 => Capstone::new()
             .arm64()
