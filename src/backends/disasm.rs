@@ -4,6 +4,7 @@ use std::{fs, path::Path};
 
 use capstone::{Capstone, Insn, arch::BuildsCapstone};
 use goblin::elf::Elf as ElfFile;
+use goblin::elf::sym;
 
 #[derive(Debug, Clone)]
 pub struct Instruction {
@@ -20,11 +21,39 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
 
     let cs = match elf_obj.header.e_machine {
         goblin::elf::header::EM_X86_64 => Capstone::new().x86().detail(true).build(),
-        goblin::elf::header::EM_ARM => Capstone::new()
-            .arm()
-            .mode(capstone::arch::arm::ArchMode::Thumb)
-            .detail(true)
-            .build(),
+        goblin::elf::header::EM_ARM => {
+            // Determine ARM vs Thumb mode by checking the LSB of the function's start address.
+            let mut is_thumb = false;
+            for sym in elf_obj.syms.iter() {
+                if sym.st_type() == sym::STT_FUNC && (sym.st_value & !1) == start {
+                    if (sym.st_value & 1) == 1 {
+                        is_thumb = true;
+                    }
+                    break;
+                }
+            }
+            if !is_thumb {
+                 for sym in elf_obj.dynsyms.iter() {
+                    if sym.st_type() == sym::STT_FUNC && (sym.st_value & !1) == start {
+                        if (sym.st_value & 1) == 1 {
+                            is_thumb = true;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            let mode = if is_thumb {
+                capstone::arch::arm::ArchMode::Thumb
+            } else {
+                capstone::arch::arm::ArchMode::Arm
+            };
+            Capstone::new()
+                .arm()
+                .mode(mode)
+                .detail(true)
+                .build()
+        }
         goblin::elf::header::EM_AARCH64 => Capstone::new()
             .arm64()
             .mode(capstone::arch::arm64::ArchMode::Arm)
