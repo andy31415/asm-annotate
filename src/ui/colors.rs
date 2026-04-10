@@ -1,23 +1,25 @@
 use colored::Color;
 
+// Matplotlib tab20 colormap
 pub const UI_PALETTE: &[Color] = &[
-    Color::Red,
-    Color::Green,
-    Color::Yellow,
-    Color::Blue,
-    Color::Magenta,
-    Color::Cyan,
-    Color::BrightRed,
-    Color::BrightGreen,
-    Color::BrightYellow,
-    Color::BrightBlue,
-    Color::BrightMagenta,
-    Color::BrightCyan,
-    // Add more colors
-    Color::TrueColor { r: 255, g: 165, b: 0 }, // Orange
-    Color::TrueColor { r: 128, g: 0, b: 128 }, // Purple
-    Color::TrueColor { r: 0, g: 128, b: 128 }, // Teal
-    Color::TrueColor { r: 255, g: 192, b: 203 }, // Pink
-    Color::TrueColor { r: 165, g: 42, b: 42 },  // Brown
-    Color::TrueColor { r: 255, g: 215, b: 0 },  // Gold
+    Color::TrueColor { r: 31, g: 119, b: 180 },  // #1f77b4
+    Color::TrueColor { r: 174, g: 199, b: 232 }, // #aec7e8
+    Color::TrueColor { r: 255, g: 127, b: 14 },  // #ff7f0e
+    Color::TrueColor { r: 255, g: 187, b: 120 }, // #ffbb78
+    Color::TrueColor { r: 44, g: 160, b: 44 },   // #2ca02c
+    Color::TrueColor { r: 152, g: 223, b: 138 }, // #98df8a
+    Color::TrueColor { r: 214, g: 39, b: 40 },   // #d62728
+    Color::TrueColor { r: 255, g: 152, b: 150 }, // #ff9896
+    Color::TrueColor { r: 148, g: 103, b: 189 }, // #9467bd
+    Color::TrueColor { r: 197, g: 176, b: 213 }, // #c5b0d5
+    Color::TrueColor { r: 140, g: 86, b: 75 },   // #8c564b
+    Color::TrueColor { r: 196, g: 156, b: 148 }, // #c49c94
+    Color::TrueColor { r: 227, g: 119, b: 194 }, // #e377c2
+    Color::TrueColor { r: 247, g: 182, b: 210 }, // #f7b6d2
+    Color::TrueColor { r: 127, g: 127, b: 127 }, // #7f7f7f
+    Color::TrueColor { r: 199, g: 199, b: 199 }, // #c7c7c7
+    Color::TrueColor { r: 188, g: 189, b: 34 },  // #bcbd22
+    Color::TrueColor { r: 219, g: 219, b: 141 }, // #dbdb8d
+    Color::TrueColor { r: 23, g: 190, b: 207 },  // #17becf
+    Color::TrueColor { r: 158, g: 218, b: 229 }, // #9edae5
 ];
