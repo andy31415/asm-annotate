@@ -1,8 +1,9 @@
 use crate::backends::demangle::DemanglerBackend;
 use crate::backends::elf::FunctionInfo;
-use color_eyre::eyre::{Context, Result, eyre};
-use std::io::Write;
-use std::process::{Command, Stdio};
+use color_eyre::eyre::{Result, eyre};
+use skim::prelude::*;
+use std::borrow::Cow;
+use std::sync::Arc;
 
 pub trait PickerBackend {
     fn pick_function(
@@ -14,77 +15,79 @@ pub trait PickerBackend {
 
 pub struct SkimBackend;
 
+struct SkimItemWrapper {
+    display_text: String,
+    func: FunctionInfo,
+}
+
+impl SkimItem for SkimItemWrapper {
+    fn text(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.display_text)
+    }
+
+    // We can add more methods here if we want to customize the preview, etc.
+}
+
 impl PickerBackend for SkimBackend {
     fn pick_function(
         &self,
         functions: Vec<FunctionInfo>,
         demangler: &impl DemanglerBackend,
     ) -> Result<Option<FunctionInfo>> {
-        let mut skim_child = Command::new("sk")
-            .arg("-m")
-            .arg("--ansi")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .wrap_err("Failed to spawn skim (sk). Is it installed?")?;
-
-        let stdin = skim_child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| eyre!("Failed to open skim stdin"))?;
-        for func in &functions {
-            let demangled = demangler
-                .demangle(&func.name)
-                .unwrap_or_else(|_| func.name.clone());
-            let display_name = if demangled != func.name {
-                format!("{}  [{}]", demangled, func.name)
-            } else {
-                func.name.clone()
-            };
-            writeln!(stdin, "{} ({}) {:#x}", display_name, func.size, func.addr)
-                .wrap_err("Failed to write to skim stdin")?;
+        if functions.is_empty() {
+            return Ok(None);
         }
 
-        let output = skim_child
-            .wait_with_output()
-            .wrap_err("Failed to wait for skim")?;
+        let items: Vec<SkimItemWrapper> = functions
+            .into_iter()
+            .map(|func| {
+                let demangled = demangler
+                    .demangle(&func.name)
+                    .unwrap_or_else(|_| func.name.clone());
+                let display_name = if demangled != func.name {
+                    format!("{}  [{}]", demangled, func.name)
+                } else {
+                    func.name.clone()
+                };
+                let display_text = format!("{} ({}) {:#x}", display_name, func.size, func.addr);
+                SkimItemWrapper { display_text, func }
+            })
+            .collect();
 
-        if !output.status.success() {
-            return Err(eyre!(
-                "skim exited with error: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
+        let options = SkimOptionsBuilder::default()
+            .multi(false)
+            .build()
+            .map_err(|e| eyre!("Failed to build Skim options: {}", e))?;
+
+        let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+        for item in items {
+            let _ = tx.send(Arc::new(item));
         }
+        drop(tx); // Close the channel
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let selected_line = stdout.lines().next();
+        let output = Skim::run_with(&options, Some(rx));
 
-        match selected_line {
-            Some(line) => {
-                // Expected format: "DISPLAY NAME (SIZE) 0xADDR"
-                let Some(addr_str) = line.rsplit(' ').next() else {
-                    return Err(eyre!(
-                        "Skim output format unexpected (no address found): {}",
-                        line
-                    ));
-                };
-
-                let Ok(addr) = u64::from_str_radix(addr_str.trim_start_matches("0x"), 16) else {
-                    return Err(eyre!("Failed to parse address from skim: {}", addr_str));
-                };
-
-                functions
-                    .into_iter()
-                    .find(|f| f.addr == addr)
-                    .map(Some)
-                    .ok_or_else(|| {
-                        eyre!(
-                            "Selected function address not found in original list: {:#x}",
-                            addr
-                        )
-                    })
+        match output {
+            Some(out) => {
+                if out.is_abort {
+                    return Ok(None); // User aborted
+                }
+                let selected_items = out.selected_items;
+                if selected_items.is_empty() {
+                    Ok(None) // No selection
+                } else {
+                    // Since multi is false, we expect at most one item
+                    let selected_item = selected_items[0].clone();
+                    eprintln!("Selected item type: {:?}", selected_item.as_any().type_id());
+                    eprintln!("SkimItemWrapper type: {:?}", std::any::TypeId::of::<SkimItemWrapper>());
+                    let wrapper = (*selected_item)
+                        .as_any()
+                        .downcast_ref::<SkimItemWrapper>()
+                        .ok_or_else(|| eyre!("Failed to downcast SkimItem"))?;
+                    Ok(Some(wrapper.func.clone()))
+                }
             }
-            None => Ok(None), // No selection made
+            None => Ok(None), // Should not happen in this configuration
         }
     }
 }
