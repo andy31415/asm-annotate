@@ -2,49 +2,78 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Running the tools
-
-Both entry points use `uv` inline script metadata so dependencies are managed automatically:
+## Building and running
 
 ```bash
-# Terminal annotator
-uv run asm_annotate.py firmware.elf my_function
-uv run asm_annotate.py firmware.elf --list
-uv run asm_annotate.py firmware.elf my_function --stats --bytes
-
-# Web UI (opens http://localhost:7777)
-uv run asm_web.py firmware.elf my_function
-uv run asm_web.py firmware.elf my_function --compile-commands build/compile_commands.json
+cargo build
+cargo run -- list firmware.elf
+cargo run -- annotate firmware.elf my_function
 ```
 
-Alternatively with plain `python` after `pip install rich pyelftools coloredlogs click`.
+Or after `cargo install --path .`:
+
+```bash
+asm-annotate list firmware.elf
+asm-annotate annotate firmware.elf my_function
+asm-annotate annotate firmware.elf my_function --stats --bytes
+asm-annotate annotate firmware.elf my_function --format unified
+asm-annotate annotate firmware.elf my_function --format split:60
+```
 
 ## Code architecture
 
-Five files, two layers:
+Single Rust binary with two layers:
 
-**Shared library modules** (used by both frontends):
-- `elf.py` — pyelftools wrapper: `list_functions`, `get_function_bounds`, `build_addr_to_src`. Parses DWARF line programs to build `addr → (file, line)` mappings.
-- `disasm.py` — objdump invocation and output parsing (`disassemble_range` returns `[(addr, bytes_hex, mnemonic)]`), plus C++ demangling via a single `c++filt` subprocess call.
-- `picker.py` — resolves a partial/fuzzy function name query to an exact mangled symbol name. Falls through: exact match → single substring match → interactive `sk`/`fzf` picker.
+**`src/backends/`** — backend logic, no rendering:
+- `elf.rs` — goblin + gimli: `list_functions`, `get_function_bounds`, `build_addr_to_src`. Parses DWARF line programs to build `addr → SourceLocation` mappings.
+- `disasm.rs` — objdump invocation and output parsing (`disassemble_range` returns `Vec<Instruction>`), plus `apply_demangling` to patch mangled names in mnemonics.
+- `demangle.rs` — `CppDemangleBackend` wrapping the `cpp_demangle` crate; `demangle` / `demangle_batch`.
+- `picker.rs` — `SkimBackend`: when multiple functions match a query, pipes them into `sk` (skim) for interactive selection.
 
-**Frontend entry points**:
-- `asm_annotate.py` — click CLI + rich terminal rendering. The render pipeline is:
-  1. `build_groups(instructions, addr_to_src, remappings) → list[RenderGroup]` — assigns colors from `PALETTE` in first-seen order, computes source line ranges, loads source text. Each `RenderGroup` holds `(color, src_file, src_line_start, src_lines, instructions, show_file_header)`.
-  2. `render_unified(func_name, groups, ...)` — classic interleaved source+asm output.
-  3. `render_split(func_name, groups, ..., src_width)` — side-by-side columns separated by `│`. Left column shows `{lineno} {marker} {source}` truncated to `src_width` chars; right column shows asm. File headers rendered as a full-width `Rule`. Use `--split` to enable; `--src-width N` overrides the default (half terminal width).
-- `asm_web.py` — stdlib `HTTPServer` serving a single-file HTML/JS app. All page HTML/CSS/JS is the `HTML_PAGE` string constant. The JS `PALETTE` is a copy of the Python one. `AppState` is a module-level singleton. API endpoints: `GET /api/state`, `GET /api/functions`, `POST /api/switch_function`, `POST /api/recompile`.
+**`src/commands/`** — subcommand handlers:
+- `list.rs` — `handle_list`: calls `list_functions`, prints address/size/name/demangled table.
+- `annotate.rs` — `handle_annotate`: resolves function name → bounds → DWARF mapping → disassemble → demangle → `DisplayItem` list → render.
+
+**`src/ui/mod.rs`** — renderers, all implementing the `Renderer` trait:
+- `UnifiedRenderer` — classic interleaved source+asm output.
+- `SplitRenderer` — side-by-side columns separated by `│`. Left column: `{lineno} ▶ {source}` truncated to `source_width`; right column: asm.
+- `SideBySideRenderer` — full source context panel on the left (with context lines above/below each hit), full asm panel on the right.
+
+**Other source files**:
+- `src/cli.rs` — clap CLI definitions (`Cli`, `Commands`, `ListArgs`, `AnnotateArgs`).
+- `src/types.rs` — `SourceLocation`, `AnnotatedInstruction`, `DisplayItem`, `UI_PALETTE`. `DisplayItem::from_annotated` assigns palette colors in first-seen order.
+- `src/source_reader.rs` — reads source files from disk; supports `--remap` prefix substitution.
+- `src/main.rs` — entry point, dispatches to subcommands.
+
+## CLI reference
+
+```
+asm-annotate [--log-level LEVEL] <SUBCOMMAND>
+
+Subcommands:
+  list (l)      <ELF> [--no-demangle]
+  annotate (a)  <ELF> [FUNCTION] [OPTIONS]
+
+annotate options:
+  --objdump <BINARY>      override objdump binary
+  --stats                 show per-source-line byte cost table
+  --bytes                 show raw instruction bytes
+  --no-dwarf              skip DWARF source mapping
+  --no-demangle           skip C++ demangling
+  --remap <OLD> <NEW>     remap source path prefix (repeatable)
+  --format <FORMAT>       split (default) | split:<N> | unified | sidebyside
+```
 
 ## External tool dependencies
 
 - `arm-none-eabi-objdump` or `llvm-objdump` or `objdump` (auto-detected in that order)
-- `c++filt` for C++ demangling (gracefully skipped if absent)
-- `sk` (skim) or `fzf` for interactive function picker (optional)
-- `arm-none-eabi-ld` for recompile linking in `asm_web.py` (falls back to `.o` if absent)
+- `sk` (skim) for interactive function picker when multiple functions match (required when ambiguous)
 
 ## Key design notes
 
-- The `PALETTE` list is duplicated between `asm_annotate.py` and the `HTML_PAGE` JS string in `asm_web.py` — keep them in sync if changing colors.
+- ELF parsing uses `goblin`; DWARF parsing uses `gimli` directly (not addr2line).
+- C++ demangling uses the `cpp_demangle` crate — no external `c++filt` subprocess.
 - `get_function_bounds` clears the Thumb bit (`& ~1`) from symbol addresses.
-- `build_addr_to_src` walks all DWARF CUs and line programs; it covers the entire ELF, not just one function.
-- The web UI's recompile flow writes modified source to a temp file, re-runs the original compiler command (from `compile_commands.json`) with the source and output paths patched, then attempts linking with `arm-none-eabi-ld`. If linking fails, it disassembles the `.o` directly.
+- `build_addr_to_src` walks all DWARF CUs and line programs; covers the entire ELF.
+- The picker (`SkimBackend`) only supports `sk` (skim) — no fzf fallback.
+- `UI_PALETTE` is defined once in `src/types.rs` (unlike the old Python version where it was duplicated).

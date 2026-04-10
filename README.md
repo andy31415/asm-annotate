@@ -1,85 +1,78 @@
-# ASM Explorer
+# ASM Annotate
 
-Two tools for understanding what your C/C++ source code costs in flash:
+A CLI tool for understanding what your C/C++ source code costs in flash — colored, Godbolt-style source↔assembly annotation in your terminal.
 
-- **`asm_annotate.py`** — Colored terminal output, Godbolt-style
-- **`asm_web.py`** — Local web UI: side-by-side source↔asm, hover to highlight, live recompile
-
-Both work with your existing ELF file (built by GN/CMake/whatever). No changes to your build needed — just build with `-g` for source mapping.
-
-Both scripts have a `uv` shebang — dependencies install automatically on first run. Just install [uv](https://docs.astral.sh/uv/) once, then run the scripts directly.
+Works with your existing ELF file (built by GN/CMake/whatever). No changes to your build needed — just build with `-g` for source mapping.
 
 ---
 
-## CLI tool: `asm_annotate.py`
+## Installation
 
 ```bash
-# List all functions in an ELF
-./asm_annotate.py firmware.elf --list
+cargo build --release
+# Binary is at target/release/asm-annotate
 
-# Annotate a specific function (auto-detects arm-none-eabi-objdump or llvm-objdump)
-./asm_annotate.py firmware.elf my_function
+# Or install to ~/.cargo/bin:
+cargo install --path .
+```
 
-# Side-by-side source│asm layout (default, 50/50 columns)
-./asm_annotate.py firmware.elf my_function --format split
+---
 
-# Split with a custom source column width
-./asm_annotate.py firmware.elf my_function --format split:60
+## Usage
+
+### List all functions in an ELF
+
+```bash
+asm-annotate list firmware.elf
+```
+
+### Annotate a function
+
+```bash
+# Side-by-side source│asm layout (default)
+asm-annotate annotate firmware.elf my_function
 
 # Classic interleaved source+asm output
-./asm_annotate.py firmware.elf my_function --format unified
+asm-annotate annotate firmware.elf my_function --format unified
 
-# With byte cost table (shows which source lines cost the most flash)
-./asm_annotate.py firmware.elf my_function --stats
+# Split with a custom source column width
+asm-annotate annotate firmware.elf my_function --format split:60
+
+# Full source context panel left, asm right
+asm-annotate annotate firmware.elf my_function --format sidebyside
+
+# With byte cost table
+asm-annotate annotate firmware.elf my_function --stats
 
 # Show raw instruction bytes too
-./asm_annotate.py firmware.elf my_function --bytes
+asm-annotate annotate firmware.elf my_function --bytes
 
-# Specify objdump explicitly
-./asm_annotate.py firmware.elf my_function --objdump arm-none-eabi-objdump
+# Override objdump binary
+asm-annotate annotate firmware.elf my_function --objdump arm-none-eabi-objdump
+
+# Remap source paths (e.g. if build tree moved)
+asm-annotate annotate firmware.elf my_function --remap /workspace /home/user/src
 ```
 
-### What you get:
+Subcommand aliases: `l` for `list`, `a` for `annotate`.
+
+### What you get
+
 - Each source line gets a distinct color
 - The assembly instructions from that source line share the same color
-- Source lines are shown inline, just above the asm they generated
-- `--stats` gives a table sorted by byte cost per source line
-
----
-
-## Web UI: `asm_web.py`
-
-```bash
-# Basic: read-only view (just needs the ELF)
-./asm_web.py firmware.elf my_function
-
-# With live recompile (needs compile_commands.json)
-./asm_web.py firmware.elf my_function --compile-commands build/compile_commands.json
-
-# Custom port
-./asm_web.py firmware.elf my_function --port 8080
-```
-
-Then open **http://localhost:7777** in your browser.
-
-### Features:
-- Side-by-side source and assembly with color coding
-- Hover over any source line → corresponding asm highlights (and vice versa)
-- Function switcher: jump between any function in the ELF
-- **Live recompile** (when `compile_commands.json` provided):
-  - Edit source in the right pane
-  - Click ⚡ Recompile
-  - See new assembly and Δ byte diff immediately
+- `split` (default): source and asm in side-by-side columns separated by `│`
+- `unified`: source lines shown inline just above the asm they generated
+- `sidebyside`: full source context panel on the left, full asm listing on the right
+- `--stats`: table sorted by byte cost per source line
 
 ---
 
 ## Tips for best results
 
 ### Build with debug info
+
 ```
-# GCC / Clang — add to your build
 -g          # DWARF debug info (source↔asm mapping)
--g3         # also includes macro info
 ```
 
 In GN:
@@ -87,44 +80,33 @@ In GN:
 cflags = [ "-g" ]
 ```
 
-### Getting compile_commands.json
-
-**GN:**
-```bash
-gn gen out/debug --export-compile-commands
-# or
-gn gen out/debug
-ninja -C out/debug -t compdb > compile_commands.json
-```
-
-**CMake:**
-```bash
-cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
-```
-
 ### Toolchain detection order
-The tools auto-detect in this order:
+
+The tool auto-detects objdump in this order:
 1. `arm-none-eabi-objdump`
 2. `llvm-objdump`
 3. `objdump` (host)
 
 Override with `--objdump <path>` if needed.
 
+### Function disambiguation
+
+If your query matches multiple functions, `sk` (skim) is launched for interactive selection. Install skim if you work with C++ code that has many similarly-named overloads.
+
 ---
 
 ## Workflow for debugging flash usage
 
 1. Build your firmware with `-g`
-2. Run `--list` to find the expensive functions (check your map file too)
-3. Use `asm_annotate.py --stats` to see which source lines cost the most bytes
-4. If you have `compile_commands.json`, open the web UI and edit+recompile to try changes
-5. Compare the Δ byte diff in the stats bar
+2. Run `list` to find the expensive functions (check your map file too)
+3. Use `annotate --stats` to see which source lines cost the most bytes
+4. Use `--format split` or `--format sidebyside` to read the asm alongside source
 
 ---
 
 ## Limitations
 
-- **Recompile requires** `compile_commands.json` — it uses the exact flags (includes, defines, optimization level) from your real build. This is key for embedded: it uses your actual arm-none-eabi-gcc with your real flags, not a host compiler.
-- **Linking for recompile**: The tool compiles to a `.o` and tries to link with `arm-none-eabi-ld`. If that fails it disassembles the object directly (addresses will be relative, not absolute, but the asm is still correct).
+- **No web UI** — this is a terminal-only tool.
 - **Inline functions**: May appear under the caller's address. DWARF handles this but results depend on optimization level.
-- Source paths in DWARF are absolute — if you move the build tree, source display will degrade gracefully (shows asm only, no source coloring).
+- Source paths in DWARF are absolute — if you move the build tree, use `--remap` to fix paths. Without remapping, source display degrades gracefully (shows asm only, no source coloring).
+- The interactive picker requires `sk` (skim). There is no fzf fallback.

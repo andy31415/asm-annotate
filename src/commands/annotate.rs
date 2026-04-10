@@ -4,7 +4,18 @@ use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::AnnotateArgs;
 use crate::source_reader::SourceReader;
 use crate::types::{AnnotatedInstruction, DisplayItem};
-use crate::ui::{Renderer, SplitRenderer, UnifiedRenderer};
+use crate::ui::{Renderer, SplitRenderer, UnifiedRenderer, compute_source_width};
+
+const SEP_WIDTH: usize = 3; // " | "
+
+fn terminal_columns() -> usize {
+    use terminal_size::{Width, terminal_size};
+    if let Some((Width(w), _)) = terminal_size() {
+        w as usize
+    } else {
+        120
+    }
+}
 use color_eyre::eyre::{Context, Result, eyre};
 use log::info;
 
@@ -134,31 +145,42 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let display_items = DisplayItem::from_annotated(&annotated_instructions, &source_reader)?;
 
     // 7. Render output
+    let term_width = terminal_columns();
+
     let renderer: Box<dyn Renderer> = if args.format == "unified" {
         Box::new(UnifiedRenderer {
             show_bytes: args.bytes,
         })
     } else if args.format.starts_with("split") {
         let parts: Vec<&str> = args.format.splitn(2, ':').collect();
-        let source_width = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(80);
+        let source_width = parts
+            .get(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| compute_source_width(&display_items, term_width));
+        let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
         Box::new(SplitRenderer {
             show_bytes: args.bytes,
             source_width,
-            asm_width: 100, // TODO: Calculate from terminal width
+            asm_width,
         })
     } else if args.format == "sidebyside" {
+        // Give source ~40 % of the terminal; asm gets the rest minus the separator.
+        let source_width = (term_width * 2 / 5).max(20);
+        let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
         Box::new(crate::ui::SideBySideRenderer {
             show_bytes: args.bytes,
             context_lines: 5,
-            source_width: 80,
-            asm_width: 100, // TODO: Calculate from terminal width
+            source_width,
+            asm_width,
         })
     } else {
         // Default to split
+        let source_width = compute_source_width(&display_items, term_width);
+        let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
         Box::new(SplitRenderer {
             show_bytes: args.bytes,
-            source_width: 80,
-            asm_width: 100, // TODO: Calculate from terminal width
+            source_width,
+            asm_width,
         })
     };
 

@@ -6,6 +6,48 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
 
+// Separator between source and asm columns: " | "
+const SEP_WIDTH: usize = 3;
+// Visible prefix for every source line: "{:>4}: ▶ " or "{:>4}:    " = 8 chars
+// (5 for line_num_str + 1 space from "{} {} {}" + 1 for "▶" + 1 space = 8)
+const SRC_LINE_PREFIX: usize = 8;
+// Minimum useful asm column width
+const MIN_ASM_WIDTH: usize = 50;
+
+/// Truncate a plain (no ANSI) string to at most `max_width` display cells,
+/// appending `…` if truncated.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(s) <= max_width {
+        return s.to_string();
+    }
+    let mut result = String::new();
+    let mut current = 0usize;
+    for c in s.chars() {
+        let cw = UnicodeWidthStr::width(c.encode_utf8(&mut [0u8; 4]));
+        if current + cw > max_width.saturating_sub(1) {
+            result.push('…');
+            break;
+        }
+        result.push(c);
+        current += cw;
+    }
+    result
+}
+
+/// Compute an auto source column width that avoids truncating any source line
+/// while ensuring the asm column has at least `MIN_ASM_WIDTH` cells.
+pub fn compute_source_width(items: &[DisplayItem], term_width: usize) -> usize {
+    let max_content = items
+        .iter()
+        .filter_map(|i| i.source_text.as_deref())
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(0);
+    let ideal = SRC_LINE_PREFIX + max_content;
+    let cap = term_width.saturating_sub(SEP_WIDTH + MIN_ASM_WIDTH);
+    ideal.min(cap).max(20)
+}
+
 pub trait Renderer {
     fn render(
         &self,
@@ -120,19 +162,20 @@ impl Renderer for SplitRenderer {
                         .map(|text| {
                             let line_num_str = format!("{:>4}:", src.line);
                             let marker = "▶ ";
-                            // Visible lengths: line number + marker
-                            let prefix_len = line_num_str.width() + marker.width();
+                            // Actual rendered prefix: line_num_str + " " + marker + " " from
+                            // the "{} {} {}" format = width(line_num_str) + width(marker) + 2
+                            let prefix_len = line_num_str.width() + marker.width() + 2;
                             let display_width = self.source_width.saturating_sub(prefix_len);
 
                             let mut src_text = text.clone();
                             if text.width() > display_width {
-                                // Truncate based on display width
+                                // Truncate to display_width-1 chars then append …
                                 let mut current_width = 0;
                                 let mut truncate_at = text.len();
                                 for (i, c) in text.char_indices() {
                                     let char_width =
                                         UnicodeWidthStr::width(c.encode_utf8(&mut [0u8; 4]));
-                                    if current_width + char_width > display_width.saturating_sub(3)
+                                    if current_width + char_width > display_width.saturating_sub(1)
                                     {
                                         truncate_at = i;
                                         break;
@@ -338,19 +381,26 @@ impl Renderer for SideBySideRenderer {
 
                     let line_num_str = format!("{:>4}:", l);
 
+                    // Truncate the raw (no ANSI) content BEFORE applying styles.
+                    // Prefix is always SRC_LINE_PREFIX (8) visible cells:
+                    //   "{:>4}:" (5) + " " + "▶" (1) + " "  — or —
+                    //   "{:>4}:" (5) + "   "
+                    let content_avail = self.source_width.saturating_sub(SRC_LINE_PREFIX);
+                    let truncated = truncate_to_width(&line_content, content_avail);
+
                     let styled_content = if is_main {
                         let c = color.unwrap_or(&Color::White);
                         format!(
                             "{} {} {}",
                             line_num_str.color(*c).bold(),
                             "▶".color(*c).bold(),
-                            line_content.color(*c)
+                            truncated.color(*c)
                         )
                     } else {
                         format!(
                             "{}   {}",
                             line_num_str.dimmed(),
-                            line_content.truecolor(100, 100, 100)
+                            truncated.truecolor(100, 100, 100)
                         )
                     };
 
@@ -367,36 +417,17 @@ impl Renderer for SideBySideRenderer {
             .collect();
 
         // --- Render Side-by-Side ---
+        // Source lines are already truncated at generation time, so we only
+        // need to pad to source_width and then print the separator + asm.
         let max_len = std::cmp::max(source_panel_lines.len(), asm_panel_lines.len());
         for i in 0..max_len {
             let src_line = source_panel_lines.get(i).cloned().unwrap_or_default();
             let asm_line = asm_panel_lines.get(i).cloned().unwrap_or_default();
 
-            // Truncate Source Line
-            let stripped_src = strip_ansi(&src_line);
-            let src_display = if stripped_src.width() > self.source_width {
-                let mut truncated = String::new();
-                let mut current_width = 0;
-                for char in src_line.chars() {
-                    let char_width = UnicodeWidthStr::width(char.encode_utf8(&mut [0u8; 4]));
-                    if current_width + char_width > self.source_width {
-                        if current_width < self.source_width {
-                            truncated.push('…');
-                        }
-                        break;
-                    }
-                    truncated.push(char);
-                    current_width += char_width;
-                }
-                truncated
-            } else {
-                src_line
-            };
+            let src_vis_width = strip_ansi(&src_line).width();
+            let padding = self.source_width.saturating_sub(src_vis_width);
 
-            let src_width = strip_ansi(&src_display).width();
-            let padding = self.source_width.saturating_sub(src_width);
-
-            print!("{}", src_display);
+            print!("{}", src_line);
             print!("{}", " ".repeat(padding));
             println!(" {} {}", "|".dimmed(), asm_line);
         }
