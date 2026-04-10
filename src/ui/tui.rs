@@ -54,6 +54,7 @@ struct AppState {
     active_pane: ActivePane,
     source_scroll: u16,
     asm_scroll: u16,
+    left_pane_width: u16, // Percentage
 }
 
 impl AppState {
@@ -184,6 +185,7 @@ impl AppState {
             active_pane: ActivePane::Source,
             source_scroll: 0,
             asm_scroll: 0,
+            left_pane_width: 50,
         }
     }
 
@@ -265,7 +267,10 @@ fn run_app<B: Backend>(
 
             let content_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                .constraints([
+                    Constraint::Percentage(app_state.left_pane_width),
+                    Constraint::Percentage(100 - app_state.left_pane_width),
+                ].as_ref())
                 .split(chunks[1]);
 
             let source_border_style = if app_state.active_pane == ActivePane::Source {
@@ -303,9 +308,20 @@ fn run_app<B: Backend>(
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Char('q') => return Ok(()),
-                KeyCode::Char('h') | KeyCode::Left => app_state.active_pane = ActivePane::Source,
-                KeyCode::Char('l') | KeyCode::Right => app_state.active_pane = ActivePane::Assembly,
+                KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
+                    app_state.active_pane = ActivePane::Source;
+                }
+                KeyCode::Char('l') | KeyCode::Right if key.modifiers.is_empty() => {
+                    app_state.active_pane = ActivePane::Assembly;
+                }
+                KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    app_state.left_pane_width = app_state.left_pane_width.saturating_sub(5).max(10);
+                }
+                KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    app_state.left_pane_width = app_state.left_pane_width.saturating_add(5).min(90);
+                }
                 KeyCode::Char('j') | KeyCode::Down => app_state.scroll_down(1),
+
                 KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
                 KeyCode::PageDown => app_state.scroll_down(PAGE_AMOUNT),
                 KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
