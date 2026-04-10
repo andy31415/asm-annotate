@@ -6,9 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cargo check
-cargo build
-cargo run -- firmware.elf my_function
-cargo run -- firmware.elf # Shows function picker
+cargo test
+cargo build --release
+# Example run
+cargo run --release -- firmware.elf my_function
+# Show picker
+cargo run --release -- firmware.elf
 ```
 
 Or after `cargo install --path .`:
@@ -23,22 +26,22 @@ Single Rust binary with several layers:
 
 **`src/backends/`** — backend logic, no rendering:
 -   `elf.rs` — goblin + gimli: `list_functions`, `get_function_bounds`, `build_addr_to_src`, `get_symbol_at`. Parses DWARF line programs to build `addr → SourceLocation` mappings.
--   `disasm.rs` — capstone: `disassemble_range` returns `Vec<Instruction>`, plus `apply_demangling` to patch mangled names in mnemonics. Uses `elf.rs` to resolve branch targets.
--   `demangle.rs` — `CppDemangleBackend` wrapping the `cpp_demangle` crate; `demangle` / `demangle_batch`.
+-   `disasm.rs` — capstone: `disassemble_range` returns `Vec<Instruction>`. Uses `elf.rs` to resolve branch targets.
+-   `demangle.rs` — `CppDemangleBackend` wrapping the `cpp_demangle` crate; `demangle`.
 -   `picker.rs` — `SkimBackend`: Uses the *embedded* `skim` crate for interactive function selection.
 
 **`src/commands/`** — command handlers:
--   `annotate.rs` — `handle_annotate`: resolves function name → bounds → DWARF mapping → disassemble → demangle → `DisplayItem` list → render TUI.
+-   `annotate.rs` — `handle_annotate`: Sets up file watcher, loads initial data, and launches the TUI. Contains `load_annotation_data` for (re)loading, and `AnnotationData` struct.
 
-**`src/ui/mod.rs`** — TUI rendering:
--   `tui.rs`: ratatui interface for side-by-side source and assembly viewing.
--   `colors.rs`: Defines the color palette used for highlighting.
+**`src/ui/`** — TUI rendering:
+-   `tui.rs`: ratatui interface for side-by-side source and assembly viewing. Manages `AppState`, event loop, and drawing. Includes hot-reloading logic via a channel receiver.
+-   `colors.rs`: Defines the color palette (based on Matplotlib `tab20`) used for highlighting.
 
 **Other source files**:
--   `src/cli.rs` — clap CLI definitions (`Cli`, `LogLevel`).
--   `src/types.rs` — `SourceLocation`, `AnnotatedInstruction`, `DisplayItem`. `DisplayItem::from_annotated` assigns palette colors.
+-   `src/cli.rs` — clap CLI definitions (`Cli`, `LogLevel`, including `--context`).
+-   `src/types.rs` — `SourceLocation`, `AnnotatedInstruction`, `DisplayItem`. `DisplayItem::from_annotated` assigns palette colors, propagating source locations.
 -   `src/source_reader.rs` — reads source files from disk; supports `--remap` prefix substitution.
--   `src/main.rs` — entry point, calls `handle_annotate`.
+-   `src/main.rs` — entry point, initializes logger, calls `handle_annotate`.
 
 ## CLI reference
 
@@ -46,7 +49,7 @@ Single Rust binary with several layers:
 asm-annotate [--log-level LEVEL] <ELF> [FUNCTION] [OPTIONS]
 
 Options:
-  --no-dwarf              skip DWARF source mapping
+  --context <N or N:M>    Set source context lines (default: 2:5)
   --no-demangle           skip C++ demangling
   --remap <OLD> <NEW>     remap source path prefix (repeatable)
 ```
@@ -57,10 +60,8 @@ None! The tool is self-contained.
 
 ## Key design notes
 
--   ELF parsing uses `goblin`; DWARF parsing uses `gimli` directly.
--   Disassembly uses the `capstone` crate.
--   C++ demangling uses the `cpp_demangle` crate.
--   Function picking uses the embedded `skim` crate.
--   `get_function_bounds` clears the Thumb bit (`& ~1`) from symbol addresses.
--   `build_addr_to_src` walks all DWARF CUs and line programs.
--   The TUI is built with `ratatui` and `crossterm`.
+-   **TUI Only:** The application exclusively uses a `ratatui` based Terminal User Interface.
+-   **Hot Reloading:** A background thread uses the `notify` crate to watch the ELF file. Changes trigger a reload of the annotation data and a TUI refresh.
+-   **Crates Used:** `goblin` (ELF), `gimli` (DWARF), `capstone` (Disassembly), `cpp_demangle` (Demangling), `skim` (Fuzzy Finding), `ratatui` & `crossterm` (TUI), `notify` (File Watching), `tui-logger` (Logging).
+-   **ARM Thumb Mode:** Automatically detected based on the symbol's LSB.
+-   **DWARF Line Propagation:** Ensures all assembly instructions corresponding to a source line are colored correctly.

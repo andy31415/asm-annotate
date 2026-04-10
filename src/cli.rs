@@ -13,10 +13,6 @@ pub struct Cli {
     #[arg(value_name = "FUNCTION")]
     pub function: Option<String>,
 
-    /// Skip DWARF source mapping
-    #[arg(long)]
-    pub no_dwarf: bool,
-
     /// Do not demangle C++ symbol names
     #[arg(long)]
     pub no_demangle: bool,

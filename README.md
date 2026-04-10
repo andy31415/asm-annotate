@@ -2,13 +2,28 @@
 
 A CLI tool for understanding what your C/C++ source code costs in flash — colored, Godbolt-style source↔assembly annotation in your terminal.
 
-Works with your existing ELF file (built by GN/CMake/whatever). No changes to your build needed — just build with `-g` for source mapping.
+Works with your existing ELF file. No changes to your build needed — just build with `-g` for source mapping.
+
+---
+
+## Features
+
+-   **Interactive TUI:** Side-by-side, colored view of source code and disassembly using `ratatui`.
+-   **Hot Reloading:** Automatically refreshes the TUI when the target ELF file is modified (e.g., after recompilation).
+-   **Self-Contained:** No external dependencies like `objdump` or `sk`.
+-   **DWARF Debug Info:** Uses DWARF data to map assembly back to source lines.
+-   **C++ Demangling:** Displays demangled C++ function names.
+-   **Fuzzy Function Finder:** Interactive function selection using an embedded version of `skim` if no function is specified or the name is ambiguous.
+-   **Configurable Context:** Control how many lines of source code are shown around matching lines.
+-   **Source Path Remapping:** Supports remapping source paths if the build environment differs from the current environment.
+-   **ARM Thumb Detection:** Correctly disassembles ARM code, detecting Thumb mode.
 
 ---
 
 ## Installation
 
 ```bash
+# Build the release binary
 cargo build --release
 # Binary is at target/release/asm-annotate
 
@@ -20,69 +35,55 @@ cargo install --path .
 
 ## Usage
 
-### Annotate a function
+```bash
+# Basic usage:
+asm-annotate [OPTIONS] <ELF_FILE> [FUNCTION]
+```
+
+**Examples:**
 
 ```bash
-# Interactive TUI for side-by-side source/asm
+# Annotate a specific function in the TUI
 asm-annotate firmware.elf my_function
 
-# If my_function is omitted, a fuzzy finder will be shown to select from all functions
+# Omit function name to use the fuzzy finder
 asm-annotate firmware.elf
 
-# Remap source paths (e.g. if build tree moved)
-asm-annotate firmware.elf my_function --remap /workspace /home/user/src
+# Adjust source context lines: 2 lines before/after, 5 lines between blocks
+asm-annotate firmware.elf my_function --context 2:5
+
+# Use the same number of context lines everywhere
+asm-annotate firmware.elf my_function --context 3
+
+# Remap source paths if the build tree moved
+asm-annotate firmware.elf my_function --remap /build/path /local/path
 ```
 
-### What you get
+### Key TUI Controls
 
--   Each source line gets a distinct color.
--   The assembly instructions from that source line share the same color.
--   An interactive Terminal User Interface (TUI) with:
-    -   Source code on the left pane.
-    -   Disassembly on the right pane.
-    -   Synchronized scrolling hints (colors).
-    -   Keyboard navigation (h/j/k/l, PageUp/Down, Ctrl+U/D).
-    -   Active pane highlighting.
-    -   Resizable panes (Shift + Left/Right or Shift + H/L).
+-   `? / Esc / q`: Toggle Help window.
+-   `q`: Quit (when help is not visible).
+-   `j / Down`: Scroll Down.
+-   `k / Up`: Scroll Up.
+-   `h / Left`: Activate Source Pane.
+-   `l / Right`: Activate Assembly Pane.
+-   `g / G`: Toggle Logger Pane.
+-   `Tab`: Switch active pane.
+-   `PgDown / Ctrl+D`: Page Down.
+-   `PgUp / Ctrl+U`: Page Up.
+-   `Shift + Left / H`: Decrease Source Pane Width.
+-   `Shift + Right / L`: Increase Source Pane Width.
 
 ---
 
-## Tips for best results
+## Tips for Best Results
 
-### Build with debug info
-
-```
--g          # DWARF debug info (source↔asm mapping)
-```
-
-In GN:
-```gn
-cflags = [ "-g" ]
-```
-
-### Function selection
-
-If you don't specify a function name, or if your query matches multiple functions, an interactive fuzzy finder (using the embedded `skim` crate) is launched for selection.
-
----
-
-## Workflow for debugging flash usage
-
-1.  Build your firmware with `-g`.
-2.  Run `asm-annotate firmware.elf` to select a function.
-3.  Use the TUI to examine the source and corresponding assembly.
-
----
-
-## Limitations
-
--   **No web UI** — this is a terminal-only tool.
--   **Inline functions**: May appear under the caller's address. DWARF handles this but results depend on optimization level.
--   Source paths in DWARF are absolute — if you move the build tree, use `--remap` to fix paths. Without remapping, source display degrades gracefully (shows asm only, no source coloring).
+-   **Build with Debug Info:** Ensure your project is compiled with `-g` to include DWARF debug symbols.
+-   **Use Hot Reloading:** Keep `asm-annotate` running while you edit and recompile your code. The view will update automatically.
 
 ---
 
 ## Future Ideas
 
--   **Automatic Recompilation:** Integrate with build systems (like Cargo, CMake, GN) to offer an option to recompile the project when source files change, and automatically refresh the TUI.
--   **Object File Support:** Allow annotating functions directly from object files (`.o`) in addition to final ELF files.
+-   **Automatic Recompilation:** Integrate with build systems (like Cargo, CMake, GN) to offer an option to recompile the project when source files change.
+-   **Object File Support:** Allow annotating functions directly from object files (`.o`).
