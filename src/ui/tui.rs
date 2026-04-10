@@ -4,7 +4,7 @@ use crate::ui::short_path;
 use color_eyre::eyre::Result;
 use colored::Color as ColoredColor;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -41,9 +41,18 @@ fn map_color(c: ColoredColor) -> Color {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ActivePane {
+    Source,
+    Assembly,
+}
+
 struct AppState {
     source_lines: Vec<Line<'static>>,
     asm_lines: Vec<Line<'static>>,
+    active_pane: ActivePane,
+    source_scroll: u16,
+    asm_scroll: u16,
 }
 
 impl AppState {
@@ -176,7 +185,41 @@ impl AppState {
             }
         }
 
-        AppState { source_lines, asm_lines }
+        AppState {
+            source_lines,
+            asm_lines,
+            active_pane: ActivePane::Source,
+            source_scroll: 0,
+            asm_scroll: 0,
+        }
+    }
+
+    fn scroll_down(&mut self, amount: u16) {
+        match self.active_pane {
+            ActivePane::Source => {
+                self.source_scroll = self.source_scroll.saturating_add(amount);
+                if self.source_scroll >= self.source_lines.len() as u16 {
+                    self.source_scroll = self.source_lines.len().saturating_sub(1) as u16;
+                }
+            }
+            ActivePane::Assembly => {
+                self.asm_scroll = self.asm_scroll.saturating_add(amount);
+                if self.asm_scroll >= self.asm_lines.len() as u16 {
+                    self.asm_scroll = self.asm_lines.len().saturating_sub(1) as u16;
+                }
+            }
+        }
+    }
+
+    fn scroll_up(&mut self, amount: u16) {
+        match self.active_pane {
+            ActivePane::Source => {
+                self.source_scroll = self.source_scroll.saturating_sub(amount);
+            }
+            ActivePane::Assembly => {
+                self.asm_scroll = self.asm_scroll.saturating_sub(amount);
+            }
+        }
     }
 }
 
@@ -211,26 +254,66 @@ pub fn run_tui(
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, func_name: &str, app_state: AppState) -> Result<()> {
+const PAGE_AMOUNT: u16 = 15;
+
+fn run_app<B: Backend>(terminal: &mut Terminal<B>, func_name: &str, mut app_state: AppState) -> Result<()> {
     loop {
         terminal.draw(|f| {
             let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)].as_ref())
+                .split(f.size());
+            
+            let title_text = format!("Annotating Function: {}", func_name);
+            let title_paragraph = Paragraph::new(Line::from(Span::styled(
+                title_text,
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            f.render_widget(title_paragraph, chunks[0]);
+
+            let content_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-                .split(f.size());
+                .split(chunks[1]);
+
+            let source_border_style = if app_state.active_pane == ActivePane::Source {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            let asm_border_style = if app_state.active_pane == ActivePane::Assembly {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
 
             let left_pane = Paragraph::new(app_state.source_lines.clone())
-                .block(Block::default().borders(Borders::ALL).title(format!("Source - {}", func_name)));
-            f.render_widget(left_pane, chunks[0]);
+                .block(Block::default().borders(Borders::ALL).title("Source").border_style(source_border_style))
+                .scroll((app_state.source_scroll, 0));
+            f.render_widget(left_pane, content_chunks[0]);
 
             let right_pane = Paragraph::new(app_state.asm_lines.clone())
-                .block(Block::default().borders(Borders::ALL).title("Assembly"));
-            f.render_widget(right_pane, chunks[1]);
+                .block(Block::default().borders(Borders::ALL).title("Assembly").border_style(asm_border_style))
+                .scroll((app_state.asm_scroll, 0));
+            f.render_widget(right_pane, content_chunks[1]);
         })?;
 
         if let Event::Key(key) = event::read()? {
-            if key.code == KeyCode::Char('q') {
-                return Ok(());
+            match key.code {
+                KeyCode::Char('q') => return Ok(()),
+                KeyCode::Char('h') | KeyCode::Left => app_state.active_pane = ActivePane::Source,
+                KeyCode::Char('l') | KeyCode::Right => app_state.active_pane = ActivePane::Assembly,
+                KeyCode::Char('j') | KeyCode::Down => app_state.scroll_down(1),
+                KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
+                KeyCode::PageDown => app_state.scroll_down(PAGE_AMOUNT),
+                KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app_state.scroll_down(PAGE_AMOUNT);
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app_state.scroll_up(PAGE_AMOUNT);
+                }
+                _ => {}
             }
         }
     }
