@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 
 /// Represents a single disassembled instruction.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instruction {
     /// The memory address of the instruction.
     pub address: u64,

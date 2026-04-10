@@ -260,3 +260,48 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
         display_name,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backends::disasm::Instruction;
+
+    fn make_inst(address: u64, mnemonic: &str) -> Instruction {
+        Instruction {
+            address,
+            bytes: "".to_string(),
+            mnemonic: mnemonic.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_extract_mangled_symbols() {
+        let instructions = vec![
+            make_inst(0x1000, "call _Z6foobarv"),
+            make_inst(0x1004, "jmp  _Z3bazi"),
+            make_inst(0x1008, "mov  eax, [_Z7dataVAR]"),
+            make_inst(0x100c, "add  ebx, 1 ; <_Z9somethingv>"),
+            make_inst(0x1010, "sub  ecx, ecx ; <not_mangled>"),
+            make_inst(0x1014, "call _Z6foobarv"), // Duplicate
+            make_inst(0x1018, "lea  rdi, [rip + _ZN1A1B1CEv]"),
+        ];
+
+        let expected = vec![
+            "_Z3bazi".to_string(),
+            "_Z6foobarv".to_string(),
+            "_Z7dataVAR".to_string(),
+            "_Z9somethingv".to_string(),
+            "_ZN1A1B1CEv".to_string(),
+        ];
+        let mut result = extract_mangled_symbols(&instructions);
+        result.sort();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_extract_mangled_symbols_empty() {
+        let instructions = vec![make_inst(0x1000, "nop")];
+        let result = extract_mangled_symbols(&instructions);
+        assert!(result.is_empty());
+    }
+}

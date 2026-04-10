@@ -15,7 +15,7 @@ pub struct SourceLocation {
 }
 
 /// An assembly instruction annotated with its optional source code location.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnotatedInstruction {
     /// The core disassembled instruction.
     pub instruction: Instruction,
@@ -59,7 +59,7 @@ impl AnnotatedInstruction {
 }
 
 /// Represents an item to be displayed in the TUI, including color information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayItem {
     /// The core disassembled instruction.
     pub instruction: Instruction,
@@ -107,5 +107,92 @@ impl DisplayItem {
         }
 
         Ok(display_items)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backends::disasm::Instruction;
+    use crate::ui::colors::UI_PALETTE;
+    use colored::Color;
+    use std::collections::HashMap;
+
+    fn make_inst(address: u64, mnemonic: &str) -> Instruction {
+        Instruction {
+            address,
+            bytes: "".to_string(),
+            mnemonic: mnemonic.to_string(),
+        }
+    }
+
+    fn make_src(file: &str, line: usize) -> SourceLocation {
+        SourceLocation { file: file.to_string(), line }
+    }
+
+    #[test]
+    fn test_annotated_from_many() {
+        let instructions = vec![
+            make_inst(0x1000, "mov"),
+            make_inst(0x1001, "add"),
+            make_inst(0x1002, "sub"),
+            make_inst(0x1004, "jmp"),
+            make_inst(0x1005, "nop"),
+        ];
+
+        let mut addr_to_src = HashMap::new();
+        addr_to_src.insert(0x1000, make_src("a.c", 10));
+        addr_to_src.insert(0x1004, make_src("b.c", 20));
+
+        let annotated = AnnotatedInstruction::from_many(&instructions, &addr_to_src);
+
+        assert_eq!(annotated.len(), 5);
+        assert_eq!(annotated[0].source, Some(make_src("a.c", 10)));
+        assert_eq!(annotated[1].source, Some(make_src("a.c", 10))); // Propagated
+        assert_eq!(annotated[2].source, Some(make_src("a.c", 10))); // Propagated
+        assert_eq!(annotated[3].source, Some(make_src("b.c", 20)));
+        assert_eq!(annotated[4].source, Some(make_src("b.c", 20))); // Propagated
+
+        // Test empty instructions
+        let empty_annotated = AnnotatedInstruction::from_many(&[], &addr_to_src);
+        assert!(empty_annotated.is_empty());
+
+        // Test empty addr_to_src
+        let no_src_annotated = AnnotatedInstruction::from_many(&instructions, &HashMap::new());
+        for item in no_src_annotated {
+            assert_eq!(item.source, None);
+        }
+    }
+
+    #[test]
+    fn test_display_item_from_annotated() {
+        let src1 = make_src("a.c", 10);
+        let src2 = make_src("b.c", 20);
+        let annotated = vec![
+            AnnotatedInstruction { instruction: make_inst(0x1000, "nop"), source: None },
+            AnnotatedInstruction { instruction: make_inst(0x1001, "mov"), source: Some(src1.clone()) },
+            AnnotatedInstruction { instruction: make_inst(0x1002, "add"), source: Some(src1.clone()) },
+            AnnotatedInstruction { instruction: make_inst(0x1003, "sub"), source: Some(src2.clone()) },
+            AnnotatedInstruction { instruction: make_inst(0x1004, "jmp"), source: None },
+        ];
+
+        let display_items = DisplayItem::from_annotated(&annotated).unwrap();
+
+        assert_eq!(display_items.len(), 5);
+
+        // No source -> White
+        assert_eq!(display_items[0].color, Color::White);
+        assert_eq!(display_items[4].color, Color::White);
+
+        // src1 gets first palette color
+        assert_eq!(display_items[1].color, UI_PALETTE[0]);
+        assert_eq!(display_items[2].color, UI_PALETTE[0]);
+
+        // src2 gets second palette color
+        assert_eq!(display_items[3].color, UI_PALETTE[1]);
+
+        // Check struct fields are copied
+        assert_eq!(display_items[1].instruction.address, 0x1001);
+        assert_eq!(display_items[1].source, Some(src1));
     }
 }
