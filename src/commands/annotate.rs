@@ -164,8 +164,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
             asm_width,
         })
     } else if args.format == "sidebyside" {
-        // Give source ~40 % of the terminal; asm gets the rest minus the separator.
-        let source_width = (term_width * 2 / 5).max(20);
+        let source_width = compute_source_width(&display_items, term_width);
         let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
         Box::new(crate::ui::SideBySideRenderer {
             show_bytes: args.bytes,
