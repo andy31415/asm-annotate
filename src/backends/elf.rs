@@ -79,7 +79,7 @@ pub trait ElfBackend {
     //    - address -> (source file: line-number)
     fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, SourceLocation>>;
 
-    fn get_symbol_at(&self, elf_path: &Path, addr: u64) -> Result<Option<String>>;
+    fn get_symbol_at(&self, elf: &elf::Elf, addr: u64) -> Result<Option<String>>;
 }
 
 pub struct GoblinElfBackend;
@@ -239,10 +239,7 @@ impl ElfBackend for GoblinElfBackend {
         Ok(mapping)
     }
 
-    fn get_symbol_at(&self, elf_path: &Path, addr: u64) -> Result<Option<String>> {
-        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
-        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
-
+    fn get_symbol_at(&self, elf: &elf::Elf, addr: u64) -> Result<Option<String>> {
         let addr = addr & !1; // Clear Thumb bit
 
         // First, check for an exact function match at the address
