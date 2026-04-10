@@ -429,7 +429,7 @@ fn run_app<B: Backend>(
             if let Event::Key(key) = event::read()? {
                 if app_state.show_help {
                     match key.code {
-                        KeyCode::Char('?') | KeyCode::Esc => {
+                        KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
                             app_state.show_help = false;
                         }
                         _ => {}
@@ -440,7 +440,7 @@ fn run_app<B: Backend>(
                             app_state.show_help = true;
                         }
                         KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('g') => {
+                        KeyCode::Char('g') | KeyCode::Char('G') => {
                             app_state.show_logger = !app_state.show_logger;
                         }
                         KeyCode::Tab => {
