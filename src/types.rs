@@ -20,16 +20,21 @@ impl AnnotatedInstruction {
         instructions: &[Instruction],
         addr_to_src: &HashMap<u64, SourceLocation>,
     ) -> Vec<AnnotatedInstruction> {
-        instructions
-            .iter()
-            .map(|inst| AnnotatedInstruction {
-                instruction: inst.clone(),
-                source: addr_to_src.get(&inst.address).cloned(),
-            })
-            .collect()
-    }
-}
+        let mut result = Vec::new();
+        let mut last_src: Option<SourceLocation> = None;
 
+                for inst in instructions {
+                    if let Some(src) = addr_to_src.get(&inst.address) {
+                        last_src = Some(src.clone());
+                    }
+                    result.push(AnnotatedInstruction {
+                        instruction: inst.clone(),
+                        source: last_src.clone(),
+                    });
+                }
+                result
+            }
+        }
 #[derive(Debug, Clone)]
 pub struct DisplayItem {
     pub instruction: Instruction,
