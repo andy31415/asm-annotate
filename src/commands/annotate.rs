@@ -144,45 +144,49 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let display_items = DisplayItem::from_annotated(&annotated_instructions, &source_reader)?;
 
     // 7. Render output
-    let term_width = terminal_columns();
-
-    let renderer: Box<dyn Renderer> = if args.format == "unified" {
-        Box::new(UnifiedRenderer {
-            show_bytes: args.bytes,
-        })
-    } else if args.format.starts_with("split") {
-        let parts: Vec<&str> = args.format.splitn(2, ':').collect();
-        let source_width = parts
-            .get(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| compute_source_width(&display_items, term_width));
-        let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
-        Box::new(SplitRenderer {
-            show_bytes: args.bytes,
-            source_width,
-            asm_width,
-        })
-    } else if args.format == "sidebyside" {
-        let source_width = compute_source_width(&display_items, term_width);
-        let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
-        Box::new(crate::ui::SideBySideRenderer {
-            show_bytes: args.bytes,
-            context_lines: 5,
-            source_width,
-            asm_width,
-        })
+    if args.format == "tui" {
+        crate::ui::tui::run_tui()?;
     } else {
-        // Default to split
-        let source_width = compute_source_width(&display_items, term_width);
-        let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
-        Box::new(SplitRenderer {
-            show_bytes: args.bytes,
-            source_width,
-            asm_width,
-        })
-    };
+        let term_width = terminal_columns();
 
-    renderer.render(&final_func_name, &display_items, &source_reader)?;
+        let renderer: Box<dyn Renderer> = if args.format == "unified" {
+            Box::new(UnifiedRenderer {
+                show_bytes: args.bytes,
+            })
+        } else if args.format.starts_with("split") {
+            let parts: Vec<&str> = args.format.splitn(2, ':').collect();
+            let source_width = parts
+                .get(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(|| compute_source_width(&display_items, term_width));
+            let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
+            Box::new(SplitRenderer {
+                show_bytes: args.bytes,
+                source_width,
+                asm_width,
+            })
+        } else if args.format == "sidebyside" {
+            let source_width = compute_source_width(&display_items, term_width);
+            let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
+            Box::new(crate::ui::SideBySideRenderer {
+                show_bytes: args.bytes,
+                context_lines: 5,
+                source_width,
+                asm_width,
+            })
+        } else {
+            // Default to split
+            let source_width = compute_source_width(&display_items, term_width);
+            let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
+            Box::new(SplitRenderer {
+                show_bytes: args.bytes,
+                source_width,
+                asm_width,
+            })
+        };
+
+        renderer.render(&final_func_name, &display_items, &source_reader)?;
+    }
 
     Ok(())
 }

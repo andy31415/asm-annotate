@@ -1,3 +1,5 @@
+pub mod tui;
+
 use crate::source_reader::SourceReader;
 use crate::types::DisplayItem;
 use colored::*;

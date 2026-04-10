@@ -92,7 +92,7 @@ pub struct AnnotateArgs {
     #[arg(long, number_of_values = 2, value_names = &["OLD", "NEW"])]
     pub remap: Vec<String>,
 
-    /// Output format: split (default, 50/50 columns), unified (interleaved source+asm), or split:<N> (split with N chars for source column)
+    /// Output format: split (default, 50/50 columns), unified (interleaved source+asm), sidebyside, tui, or split:<N> (split with N chars for source column)
     #[arg(long, default_value = "split", value_name = "FORMAT")]
     pub format: String,
 }
