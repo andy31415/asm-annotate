@@ -53,10 +53,7 @@ mod tests {
     #[test]
     fn test_demangle_batch_skips_failures() {
         let backend = CppDemangleBackend;
-        let names = vec![
-            "_Z3foov".to_string(),
-            "not_mangled".to_string(),
-        ];
+        let names = vec!["_Z3foov".to_string(), "not_mangled".to_string()];
         let result = backend.demangle_batch(&names).unwrap();
         assert_eq!(result.get("_Z3foov").unwrap(), "foo()");
         // Non-mangled names are silently skipped
