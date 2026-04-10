@@ -145,7 +145,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
 
     // 7. Render output
     if args.format == "tui" {
-        crate::ui::tui::run_tui()?;
+        crate::ui::tui::run_tui(&final_func_name, &display_items, &source_reader)?;
     } else {
         let term_width = terminal_columns();
 
