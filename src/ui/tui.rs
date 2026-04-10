@@ -15,6 +15,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph},
+    Frame,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -347,18 +348,7 @@ fn run_app<B: Backend>(
                 )
                 .split(size);
 
-            let title_line = Line::from(vec![
-                Span::raw("Annotating Function: "),
-                Span::styled(
-                    app_state.display_name.clone(),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" (Press ‘?’ for help, ‘G’ to toggle logs)"),
-            ]);
-            let title_paragraph = Paragraph::new(title_line).alignment(Alignment::Center);
-            f.render_widget(title_paragraph, main_chunks[0]);
+            ui_title(f, &app_state, main_chunks[0]);
 
             let content_chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -371,81 +361,15 @@ fn run_app<B: Backend>(
                 )
                 .split(main_chunks[1]);
 
-            let source_border_style =
-                if app_state.active_pane == ActivePane::Source && !app_state.show_help {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default()
-                };
-            let asm_border_style =
-                if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default()
-                };
-
-            let left_pane = Paragraph::new(app_state.source_lines.clone())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Source")
-                        .border_style(source_border_style),
-                )
-                .scroll((app_state.source_scroll, 0));
-            f.render_widget(left_pane, content_chunks[0]);
-
-            let right_pane = Paragraph::new(app_state.asm_lines.clone())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Assembly")
-                        .border_style(asm_border_style),
-                )
-                .scroll((app_state.asm_scroll, 0));
-            f.render_widget(right_pane, content_chunks[1]);
+            ui_source_pane(f, &app_state, content_chunks[0]);
+            ui_asm_pane(f, &app_state, content_chunks[1]);
 
             if app_state.show_logger {
-                let logger_widget = TuiLoggerWidget::default()
-                    .block(
-                        Block::default()
-                            .title("Logs (G: Close)")
-                            .borders(Borders::ALL),
-                    )
-                    .state(&app_state.logger_state);
-                f.render_widget(logger_widget, main_chunks[2]);
+                ui_logger(f, &app_state, main_chunks[2]);
             }
 
             if app_state.show_help {
-                let help_text = Text::from(vec![
-                    Line::from(Span::styled(
-                        "Keybindings",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(""),
-                    Line::from("? / Esc / q: Toggle Help"),
-                    Line::from("q: Quit (when help is not visible)"),
-                    Line::from("j / Down: Scroll Down (in active pane)"),
-                    Line::from("k / Up: Scroll Up (in active pane)"),
-                    Line::from("h / Left: Activate Source Pane"),
-                    Line::from("l / Right: Activate Assembly Pane"),
-                    Line::from("g / G: Toggle Logger Pane"),
-                    Line::from("Tab: Cycle through Source/Assembly"),
-                    Line::from("PgDown / Ctrl+D: Page Down"),
-                    Line::from("PgUp / Ctrl+U: Page Up"),
-                    Line::from("Shift + Left / H: Decrease Source Pane Width"),
-                    Line::from("Shift + Right / L: Increase Source Pane Width"),
-                ]);
-                let block = Block::default()
-                    .title(" Help ")
-                    .borders(Borders::ALL)
-                    .style(Style::default().fg(Color::White).bg(Color::DarkGray));
-
-                let area = centered_rect(60, 18, size);
-                let help_paragraph = Paragraph::new(help_text)
-                    .block(block)
-                    .alignment(Alignment::Left);
-                f.render_widget(Clear, area);
-                f.render_widget(help_paragraph, area);
+                ui_help(f, size);
             }
         })?;
 
@@ -515,6 +439,101 @@ fn run_app<B: Backend>(
             }
         }
     }
+}
+
+fn ui_title(f: &mut Frame, app_state: &AppState, area: Rect) {
+    let title_line = Line::from(vec![
+        Span::raw("Annotating Function: "),
+        Span::styled(
+            app_state.display_name.clone(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" (Press ‘?’ for help, ‘G’ to toggle logs)"),
+    ]);
+    let title_paragraph = Paragraph::new(title_line).alignment(Alignment::Center);
+    f.render_widget(title_paragraph, area);
+}
+
+fn ui_source_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
+    let border_style =
+        if app_state.active_pane == ActivePane::Source && !app_state.show_help {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+    let pane = Paragraph::new(app_state.source_lines.clone())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Source")
+                .border_style(border_style),
+        )
+        .scroll((app_state.source_scroll, 0));
+    f.render_widget(pane, area);
+}
+
+fn ui_asm_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
+    let border_style =
+        if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+    let pane = Paragraph::new(app_state.asm_lines.clone())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Assembly")
+                .border_style(border_style),
+        )
+        .scroll((app_state.asm_scroll, 0));
+    f.render_widget(pane, area);
+}
+
+fn ui_logger(f: &mut Frame, app_state: &AppState, area: Rect) {
+    let logger_widget = TuiLoggerWidget::default()
+        .block(
+            Block::default()
+                .title("Logs (G: Close)")
+                .borders(Borders::ALL),
+        )
+        .state(&app_state.logger_state);
+    f.render_widget(logger_widget, area);
+}
+
+fn ui_help(f: &mut Frame, size: Rect) {
+    let help_text = Text::from(vec![
+        Line::from(Span::styled(
+            "Keybindings",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("? / Esc / q: Toggle Help"),
+        Line::from("q: Quit (when help is not visible)"),
+        Line::from("j / Down: Scroll Down (in active pane)"),
+        Line::from("k / Up: Scroll Up (in active pane)"),
+        Line::from("h / Left: Activate Source Pane"),
+        Line::from("l / Right: Activate Assembly Pane"),
+        Line::from("g / G: Toggle Logger Pane"),
+        Line::from("Tab: Cycle through Source/Assembly"),
+        Line::from("PgDown / Ctrl+D: Page Down"),
+        Line::from("PgUp / Ctrl+U: Page Up"),
+        Line::from("Shift + Left / H: Decrease Source Pane Width"),
+        Line::from("Shift + Right / L: Increase Source Pane Width"),
+    ]);
+    let block = Block::default()
+        .title(" Help ")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::White).bg(Color::DarkGray));
+
+    let area = centered_rect(60, 18, size);
+    let help_paragraph = Paragraph::new(help_text)
+        .block(block)
+        .alignment(Alignment::Left);
+    f.render_widget(Clear, area);
+    f.render_widget(help_paragraph, area);
 }
 
 /// Helper function to create a centered rectangle.
