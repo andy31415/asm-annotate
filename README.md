@@ -20,50 +20,30 @@ cargo install --path .
 
 ## Usage
 
-### List all functions in an ELF
-
-```bash
-asm-annotate list firmware.elf
-```
-
 ### Annotate a function
 
 ```bash
-# Side-by-side source│asm layout (default)
-asm-annotate annotate firmware.elf my_function
+# Interactive TUI for side-by-side source/asm
+asm-annotate firmware.elf my_function
 
-# Classic interleaved source+asm output
-asm-annotate annotate firmware.elf my_function --format unified
-
-# Split with a custom source column width
-asm-annotate annotate firmware.elf my_function --format split:60
-
-# Full source context panel left, asm right
-asm-annotate annotate firmware.elf my_function --format sidebyside
-
-# With byte cost table
-asm-annotate annotate firmware.elf my_function --stats
-
-# Show raw instruction bytes too
-asm-annotate annotate firmware.elf my_function --bytes
-
-# Override objdump binary
-asm-annotate annotate firmware.elf my_function --objdump arm-none-eabi-objdump
+# If my_function is omitted, a fuzzy finder will be shown to select from all functions
+asm-annotate firmware.elf
 
 # Remap source paths (e.g. if build tree moved)
-asm-annotate annotate firmware.elf my_function --remap /workspace /home/user/src
+asm-annotate firmware.elf my_function --remap /workspace /home/user/src
 ```
-
-Subcommand aliases: `l` for `list`, `a` for `annotate`.
 
 ### What you get
 
-- Each source line gets a distinct color
-- The assembly instructions from that source line share the same color
-- `split` (default): source and asm in side-by-side columns separated by `│`
-- `unified`: source lines shown inline just above the asm they generated
-- `sidebyside`: full source context panel on the left, full asm listing on the right
-- `--stats`: table sorted by byte cost per source line
+-   Each source line gets a distinct color.
+-   The assembly instructions from that source line share the same color.
+-   An interactive Terminal User Interface (TUI) with:
+    -   Source code on the left pane.
+    -   Disassembly on the right pane.
+    -   Synchronized scrolling hints (colors).
+    -   Keyboard navigation (h/j/k/l, PageUp/Down, Ctrl+U/D).
+    -   Active pane highlighting.
+    -   Resizable panes (Shift + Left/Right or Shift + H/L).
 
 ---
 
@@ -80,33 +60,22 @@ In GN:
 cflags = [ "-g" ]
 ```
 
-### Toolchain detection order
+### Function selection
 
-The tool auto-detects objdump in this order:
-1. `arm-none-eabi-objdump`
-2. `llvm-objdump`
-3. `objdump` (host)
-
-Override with `--objdump <path>` if needed.
-
-### Function disambiguation
-
-If your query matches multiple functions, `sk` (skim) is launched for interactive selection. Install skim if you work with C++ code that has many similarly-named overloads.
+If you don't specify a function name, or if your query matches multiple functions, an interactive fuzzy finder (using the embedded `skim` crate) is launched for selection.
 
 ---
 
 ## Workflow for debugging flash usage
 
-1. Build your firmware with `-g`
-2. Run `list` to find the expensive functions (check your map file too)
-3. Use `annotate --stats` to see which source lines cost the most bytes
-4. Use `--format split` or `--format sidebyside` to read the asm alongside source
+1.  Build your firmware with `-g`.
+2.  Run `asm-annotate firmware.elf` to select a function.
+3.  Use the TUI to examine the source and corresponding assembly.
 
 ---
 
 ## Limitations
 
-- **No web UI** — this is a terminal-only tool.
-- **Inline functions**: May appear under the caller's address. DWARF handles this but results depend on optimization level.
-- Source paths in DWARF are absolute — if you move the build tree, use `--remap` to fix paths. Without remapping, source display degrades gracefully (shows asm only, no source coloring).
-- The interactive picker requires `sk` (skim). There is no fzf fallback.
+-   **No web UI** — this is a terminal-only tool.
+-   **Inline functions**: May appear under the caller's address. DWARF handles this but results depend on optimization level.
+-   Source paths in DWARF are absolute — if you move the build tree, use `--remap` to fix paths. Without remapping, source display degrades gracefully (shows asm only, no source coloring).

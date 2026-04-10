@@ -13,14 +13,6 @@ pub struct Cli {
     #[arg(value_name = "FUNCTION")]
     pub function: Option<String>,
 
-    /// Show per-source-line instruction/byte cost table
-    #[arg(long)]
-    pub stats: bool,
-
-    /// Show raw instruction bytes alongside mnemonics
-    #[arg(long)]
-    pub bytes: bool,
-
     /// Skip DWARF source mapping
     #[arg(long)]
     pub no_dwarf: bool,
