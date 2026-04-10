@@ -25,6 +25,10 @@ pub struct Cli {
     #[arg(long, number_of_values = 2, value_names = &["OLD", "NEW"])]
     pub remap: Vec<String>,
 
+    /// Set source context lines: N for all, or N:M for pre/post:inter. Default: 2:5
+    #[arg(long, default_value = "2:5")]
+    pub context: String,
+
     /// Set the logging level.
     #[arg(short, long, global = true, default_value_t = LogLevel::Info, ignore_case = true)]
     pub log_level: LogLevel,

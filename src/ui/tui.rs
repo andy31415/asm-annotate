@@ -1,6 +1,6 @@
 use crate::cli::Cli;
 use crate::commands::annotate::{AnnotationData, load_annotation_data};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 use colored::Color as ColoredColor;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -64,10 +64,26 @@ struct AppState {
     show_logger: bool,
     logger_state: TuiWidgetState,
     display_name: String,
+    pre_post_context: usize,
+    inter_context: usize,
+}
+
+// Helper to parse context string
+fn parse_context(context_str: &str) -> Result<(usize, usize)> {
+    if let Ok(n) = context_str.parse::<usize>() {
+        Ok((n, n))
+    } else if let Some((n_str, m_str)) = context_str.split_once(':') {
+        let n = n_str.parse::<usize>().map_err(|_| eyre!("Invalid context number: {}", n_str))?;
+        let m = m_str.parse::<usize>().map_err(|_| eyre!("Invalid context number: {}", m_str))?;
+        Ok((n, m))
+    } else {
+        Err(eyre!("Invalid context format: {}. Use N or N:M", context_str))
+    }
 }
 
 impl AppState {
-    fn new(cli_args: &Cli, func_name: &str, data: AnnotationData) -> Self {
+    fn new(cli_args: &Cli, func_name: &str, data: AnnotationData) -> Result<Self> {
+        let (pre_post_context, inter_context) = parse_context(&cli_args.context)?;
         let mut state = AppState {
             cli_args: cli_args.clone(),
             func_name: func_name.to_string(),
@@ -81,16 +97,17 @@ impl AppState {
             show_logger: false,
             logger_state: TuiWidgetState::new().set_default_display_level(log::LevelFilter::Info),
             display_name: data.display_name.clone(),
+            pre_post_context,
+            inter_context,
         };
         state.update_data(data);
-        state
+        Ok(state)
     }
 
     fn update_data(&mut self, data: AnnotationData) {
         self.display_name = data.display_name;
         let source_reader = &data.source_reader;
         let items = &data.display_items;
-        const CONTEXT_LINES: usize = 5;
 
         // --- Prepare Assembly Lines ---
         let asm_lines: Vec<Line<'static>> = items
@@ -151,13 +168,15 @@ impl AppState {
             let mut i = 0;
             while i < sorted_asm_lines.len() {
                 let current_asm_line = sorted_asm_lines[i];
-                let start = std::cmp::max(1, current_asm_line.saturating_sub(CONTEXT_LINES));
-                let mut end = current_asm_line + CONTEXT_LINES;
+                let context = if i == 0 { self.pre_post_context } else { self.inter_context };
+                let start = std::cmp::max(1, current_asm_line.saturating_sub(context));
+                let mut end = current_asm_line + context;
                 let mut j = i + 1;
                 while j < sorted_asm_lines.len() {
                     let next_asm_line = sorted_asm_lines[j];
-                    if std::cmp::max(1, next_asm_line.saturating_sub(CONTEXT_LINES)) <= end + 1 {
-                        end = next_asm_line + CONTEXT_LINES;
+                    let next_context = self.inter_context;
+                    if std::cmp::max(1, next_asm_line.saturating_sub(next_context)) <= end + 1 {
+                        end = next_asm_line + next_context;
                         j += 1;
                     } else {
                         break;
@@ -165,6 +184,12 @@ impl AppState {
                 }
                 ranges.push((start, end));
                 i = j;
+            }
+
+            // Adjust the end context for the last range
+            if let Some(last_range) = ranges.last_mut() {
+                let last_asm_line = *sorted_asm_lines.last().unwrap();
+                last_range.1 = last_asm_line + self.pre_post_context;
             }
 
             let mut last_printed_line: Option<usize> = None;
@@ -264,7 +289,7 @@ pub fn run_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app_state = AppState::new(cli_args, func_name, initial_data);
+    let app_state = AppState::new(cli_args, func_name, initial_data)?;
     let res = run_app(&mut terminal, app_state, file_change_rx);
 
     disable_raw_mode()?;
@@ -397,13 +422,13 @@ fn run_app<B: Backend>(
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
-                    Line::from("? / Esc: Toggle Help"),
-                    Line::from("q: Quit"),
+                    Line::from("? / Esc / q: Toggle Help"),
+                    Line::from("q: Quit (when help is not visible)"),
                     Line::from("j / Down: Scroll Down (in active pane)"),
                     Line::from("k / Up: Scroll Up (in active pane)"),
                     Line::from("h / Left: Activate Source Pane"),
                     Line::from("l / Right: Activate Assembly Pane"),
-                    Line::from("g: Toggle Logger Pane"),
+                    Line::from("g / G: Toggle Logger Pane"),
                     Line::from("Tab: Cycle through Source/Assembly"),
                     Line::from("PgDown / Ctrl+D: Page Down"),
                     Line::from("PgUp / Ctrl+U: Page Up"),
@@ -542,5 +567,17 @@ mod tests {
     fn test_short_path_shorter_than_depth() {
         assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
         assert_eq!(short_path("short.c", 3), "short.c");
+    }
+
+    #[test]
+    fn test_parse_context() {
+        assert_eq!(parse_context("3").unwrap(), (3, 3));
+        assert_eq!(parse_context("2:5").unwrap(), (2, 5));
+        assert!(parse_context("2:").is_err());
+        assert!(parse_context(":5").is_err());
+        assert!(parse_context("a:5").is_err());
+        assert!(parse_context("2:b").is_err());
+        assert!(parse_context("2:5:1").is_err());
+        assert!(parse_context("").is_err());
     }
 }
