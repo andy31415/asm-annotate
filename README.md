@@ -79,3 +79,10 @@ If you don't specify a function name, or if your query matches multiple function
 -   **No web UI** — this is a terminal-only tool.
 -   **Inline functions**: May appear under the caller's address. DWARF handles this but results depend on optimization level.
 -   Source paths in DWARF are absolute — if you move the build tree, use `--remap` to fix paths. Without remapping, source display degrades gracefully (shows asm only, no source coloring).
+
+---
+
+## Future Ideas
+
+-   **Automatic Recompilation:** Integrate with build systems (like Cargo, CMake, GN) to offer an option to recompile the project when source files change, and automatically refresh the TUI.
+-   **Object File Support:** Allow annotating functions directly from object files (`.o`) in addition to final ELF files.

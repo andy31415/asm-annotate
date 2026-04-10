@@ -1,3 +1,2 @@
-pub mod tui;
 pub mod colors;
-
+pub mod tui;

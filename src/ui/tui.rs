@@ -1,5 +1,5 @@
-use crate::source_reader::SourceReader;
-use crate::types::DisplayItem;
+use crate::cli::Cli;
+use crate::commands::annotate::{AnnotationData, load_annotation_data};
 use color_eyre::eyre::Result;
 use colored::Color as ColoredColor;
 use crossterm::{
@@ -7,7 +7,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use log::error;
+use log::{error, info};
 use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
@@ -19,6 +19,8 @@ use ratatui::{
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
 use tui_logger::{TuiLoggerWidget, TuiWidgetState};
 
 fn map_color(c: ColoredColor) -> Color {
@@ -50,6 +52,8 @@ enum ActivePane {
 }
 
 struct AppState {
+    cli_args: Cli,
+    func_name: String,
     source_lines: Vec<Line<'static>>,
     asm_lines: Vec<Line<'static>>,
     active_pane: ActivePane,
@@ -59,10 +63,35 @@ struct AppState {
     show_help: bool,
     show_logger: bool,
     logger_state: TuiWidgetState,
+    display_name: String,
 }
 
 impl AppState {
-    fn new(items: &[DisplayItem], source_reader: &SourceReader, context_lines: usize) -> Self {
+    fn new(cli_args: &Cli, func_name: &str, data: AnnotationData) -> Self {
+        let mut state = AppState {
+            cli_args: cli_args.clone(),
+            func_name: func_name.to_string(),
+            source_lines: Vec::new(),
+            asm_lines: Vec::new(),
+            active_pane: ActivePane::Source,
+            source_scroll: 0,
+            asm_scroll: 0,
+            left_pane_width: 50,
+            show_help: false,
+            show_logger: false,
+            logger_state: TuiWidgetState::new().set_default_display_level(log::LevelFilter::Info),
+            display_name: data.display_name.clone(),
+        };
+        state.update_data(data);
+        state
+    }
+
+    fn update_data(&mut self, data: AnnotationData) {
+        self.display_name = data.display_name;
+        let source_reader = &data.source_reader;
+        let items = &data.display_items;
+        const CONTEXT_LINES: usize = 5;
+
         // --- Prepare Assembly Lines ---
         let asm_lines: Vec<Line<'static>> = items
             .iter()
@@ -88,7 +117,7 @@ impl AppState {
             })
             .collect();
 
-        // --- Prepare Source Lines (SideBySideRenderer logic) ---
+        // --- Prepare Source Lines ---
         let mut source_map: BTreeMap<String, BTreeMap<usize, ()>> = BTreeMap::new();
         let mut file_line_color: HashMap<(String, usize), Color> = HashMap::new();
 
@@ -122,13 +151,13 @@ impl AppState {
             let mut i = 0;
             while i < sorted_asm_lines.len() {
                 let current_asm_line = sorted_asm_lines[i];
-                let start = std::cmp::max(1, current_asm_line.saturating_sub(context_lines));
-                let mut end = current_asm_line + context_lines;
+                let start = std::cmp::max(1, current_asm_line.saturating_sub(CONTEXT_LINES));
+                let mut end = current_asm_line + CONTEXT_LINES;
                 let mut j = i + 1;
                 while j < sorted_asm_lines.len() {
                     let next_asm_line = sorted_asm_lines[j];
-                    if std::cmp::max(1, next_asm_line.saturating_sub(context_lines)) <= end + 1 {
-                        end = next_asm_line + context_lines;
+                    if std::cmp::max(1, next_asm_line.saturating_sub(CONTEXT_LINES)) <= end + 1 {
+                        end = next_asm_line + CONTEXT_LINES;
                         j += 1;
                     } else {
                         break;
@@ -183,44 +212,33 @@ impl AppState {
             }
         }
 
-        AppState {
-            source_lines,
-            asm_lines,
-            active_pane: ActivePane::Source,
-            source_scroll: 0,
-            asm_scroll: 0,
-            left_pane_width: 50,
-            show_help: false,
-            show_logger: false,
-            logger_state: TuiWidgetState::new(),
-        }
+        self.source_lines = source_lines;
+        self.asm_lines = asm_lines;
     }
 
-            fn scroll_down(&mut self, amount: u16, _pane_height: u16) {
-                let min_visible_lines: u16 = 5;
-
-                match self.active_pane {
-
-                    ActivePane::Source => {
-                        let content_height = self.source_lines.len() as u16;
-                        if content_height > min_visible_lines {
-                            let max_scroll = content_height.saturating_sub(min_visible_lines);
-                            self.source_scroll = self.source_scroll.saturating_add(amount).min(max_scroll);
-                        } else {
-                            self.source_scroll = 0; // Not enough lines to scroll
-                        }
-                    }
-                    ActivePane::Assembly => {
-                        let content_height = self.asm_lines.len() as u16;
-                        if content_height > min_visible_lines {
-                            let max_scroll = content_height.saturating_sub(min_visible_lines);
-                            self.asm_scroll = self.asm_scroll.saturating_add(amount).min(max_scroll);
-                        } else {
-                            self.asm_scroll = 0; // Not enough lines to scroll
-                        }
-                    }
+    fn scroll_down(&mut self, amount: u16, _pane_height: u16) {
+        let min_visible_lines: u16 = 5;
+        match self.active_pane {
+            ActivePane::Source => {
+                let content_height = self.source_lines.len() as u16;
+                if content_height > min_visible_lines {
+                    let max_scroll = content_height.saturating_sub(min_visible_lines);
+                    self.source_scroll = self.source_scroll.saturating_add(amount).min(max_scroll);
+                } else {
+                    self.source_scroll = 0;
                 }
             }
+            ActivePane::Assembly => {
+                let content_height = self.asm_lines.len() as u16;
+                if content_height > min_visible_lines {
+                    let max_scroll = content_height.saturating_sub(min_visible_lines);
+                    self.asm_scroll = self.asm_scroll.saturating_add(amount).min(max_scroll);
+                } else {
+                    self.asm_scroll = 0;
+                }
+            }
+        }
+    }
 
     fn scroll_up(&mut self, amount: u16) {
         match self.active_pane {
@@ -234,18 +252,21 @@ impl AppState {
     }
 }
 
-pub fn run_tui(func_name: &str, items: &[DisplayItem], source_reader: &SourceReader) -> Result<()> {
-    // setup terminal
+pub fn run_tui(
+    cli_args: &Cli,
+    func_name: &str,
+    initial_data: AnnotationData,
+    file_change_rx: Receiver<()>, // Add this parameter
+) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app_state = AppState::new(items, source_reader, 5); // 5 lines of context
-    let res = run_app(&mut terminal, func_name, app_state);
+    let app_state = AppState::new(cli_args, func_name, initial_data);
+    let res = run_app(&mut terminal, app_state, file_change_rx);
 
-    // restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -255,7 +276,7 @@ pub fn run_tui(func_name: &str, items: &[DisplayItem], source_reader: &SourceRea
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        error!("{:?}", err);
+        error!("TUI error: {:?}", err);
     }
 
     Ok(())
@@ -266,25 +287,45 @@ const LOGGER_HEIGHT: u16 = 10;
 
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
-    func_name: &str,
     mut app_state: AppState,
+    file_change_rx: Receiver<()>, // Add this parameter
 ) -> Result<()> {
     loop {
+        // Handle potential file changes
+        if file_change_rx.try_recv().is_ok() {
+            info!("Reloading annotation data due to file change...");
+            match load_annotation_data(&app_state.cli_args, &app_state.func_name) {
+                Ok(new_data) => {
+                    app_state.update_data(new_data);
+                }
+                Err(e) => {
+                    error!("Failed to reload annotation data: {}", e);
+                }
+            }
+        }
+
         terminal.draw(|f| {
             let size = f.size();
             let main_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1), // Title
-                    Constraint::Min(0),    // Content
-                    Constraint::Length(if app_state.show_logger { LOGGER_HEIGHT } else { 0 }), // Logger
-                ].as_ref())
+                .constraints(
+                    [
+                        Constraint::Length(1), // Title
+                        Constraint::Min(0),    // Content
+                        Constraint::Length(if app_state.show_logger {
+                            LOGGER_HEIGHT
+                        } else {
+                            0
+                        }), // Logger
+                    ]
+                    .as_ref(),
+                )
                 .split(size);
 
             let title_line = Line::from(vec![
                 Span::raw("Annotating Function: "),
                 Span::styled(
-                    func_name,
+                    app_state.display_name.clone(),
                     Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
@@ -296,22 +337,27 @@ fn run_app<B: Backend>(
 
             let content_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(app_state.left_pane_width),
-                    Constraint::Percentage(100 - app_state.left_pane_width),
-                ].as_ref())
+                .constraints(
+                    [
+                        Constraint::Percentage(app_state.left_pane_width),
+                        Constraint::Percentage(100 - app_state.left_pane_width),
+                    ]
+                    .as_ref(),
+                )
                 .split(main_chunks[1]);
 
-            let source_border_style = if app_state.active_pane == ActivePane::Source && !app_state.show_help {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            };
-            let asm_border_style = if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            };
+            let source_border_style =
+                if app_state.active_pane == ActivePane::Source && !app_state.show_help {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+            let asm_border_style =
+                if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
 
             let left_pane = Paragraph::new(app_state.source_lines.clone())
                 .block(
@@ -346,7 +392,10 @@ fn run_app<B: Backend>(
 
             if app_state.show_help {
                 let help_text = Text::from(vec![
-                    Line::from(Span::styled("Keybindings", Style::default().add_modifier(Modifier::BOLD))),
+                    Line::from(Span::styled(
+                        "Keybindings",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
                     Line::from(""),
                     Line::from("? / Esc: Toggle Help"),
                     Line::from("q: Quit"),
@@ -367,75 +416,76 @@ fn run_app<B: Backend>(
                     .style(Style::default().fg(Color::White).bg(Color::DarkGray));
 
                 let area = centered_rect(60, 18, size);
-                let help_paragraph = Paragraph::new(help_text).block(block).alignment(Alignment::Left);
+                let help_paragraph = Paragraph::new(help_text)
+                    .block(block)
+                    .alignment(Alignment::Left);
                 f.render_widget(Clear, area);
                 f.render_widget(help_paragraph, area);
             }
         })?;
 
-        if let Event::Key(key) = event::read()? {
-            if app_state.show_help {
-                match key.code {
-                    KeyCode::Char('?') | KeyCode::Esc => {
-                        app_state.show_help = false;
+        // Poll for key events
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if app_state.show_help {
+                    match key.code {
+                        KeyCode::Char('?') | KeyCode::Esc => {
+                            app_state.show_help = false;
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-            } else {
-                match key.code {
-                    KeyCode::Char('?') => {
-                        app_state.show_help = true;
+                } else {
+                    match key.code {
+                        KeyCode::Char('?') => {
+                            app_state.show_help = true;
+                        }
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('g') => {
+                            app_state.show_logger = !app_state.show_logger;
+                        }
+                        KeyCode::Tab => {
+                            app_state.active_pane = match app_state.active_pane {
+                                ActivePane::Source => ActivePane::Assembly,
+                                ActivePane::Assembly => ActivePane::Source,
+                            };
+                        }
+                        KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
+                            app_state.active_pane = ActivePane::Source;
+                        }
+                        KeyCode::Char('l') | KeyCode::Right if key.modifiers.is_empty() => {
+                            app_state.active_pane = ActivePane::Assembly;
+                        }
+                        KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left
+                            if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                        {
+                            app_state.left_pane_width =
+                                app_state.left_pane_width.saturating_sub(5).max(10);
+                        }
+                        KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right
+                            if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                        {
+                            app_state.left_pane_width =
+                                app_state.left_pane_width.saturating_add(5).min(90);
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let _pane_height = terminal.size().unwrap_or_default().height;
+                            app_state.scroll_down(1, _pane_height);
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
+                        KeyCode::PageDown => {
+                            let _pane_height = terminal.size().unwrap_or_default().height;
+                            app_state.scroll_down(PAGE_AMOUNT, _pane_height);
+                        }
+                        KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
+                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            let _pane_height = terminal.size().unwrap_or_default().height;
+                            app_state.scroll_down(PAGE_AMOUNT, _pane_height);
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            app_state.scroll_up(PAGE_AMOUNT);
+                        }
+                        _ => {}
                     }
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('g') => {
-                        app_state.show_logger = !app_state.show_logger;
-                    }
-                    KeyCode::Tab => {
-                        app_state.active_pane = match app_state.active_pane {
-                            ActivePane::Source => ActivePane::Assembly,
-                            ActivePane::Assembly => ActivePane::Source,
-                        };
-                    }
-                    KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
-                        app_state.active_pane = ActivePane::Source;
-                    }
-                    KeyCode::Char('l') | KeyCode::Right if key.modifiers.is_empty() => {
-                        app_state.active_pane = ActivePane::Assembly;
-                    }
-                    KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                        app_state.left_pane_width = app_state.left_pane_width.saturating_sub(5).max(10);
-                    }
-                    KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                        app_state.left_pane_width = app_state.left_pane_width.saturating_add(5).min(90);
-                    }
-                                        KeyCode::Char('j') | KeyCode::Down => {
-                                            let pane_height = match app_state.active_pane {
-                                                ActivePane::Source => terminal.size().unwrap_or_default().height,
-                                                ActivePane::Assembly => terminal.size().unwrap_or_default().height,
-                                            };
-                                            app_state.scroll_down(1, pane_height);
-                                        }
-                                        KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
-                                        KeyCode::PageDown => {
-                                            let pane_height = match app_state.active_pane {
-                                                ActivePane::Source => terminal.size().unwrap_or_default().height,
-                                                ActivePane::Assembly => terminal.size().unwrap_or_default().height,
-                                            };
-                                            app_state.scroll_down(PAGE_AMOUNT, pane_height);
-                                        }
-                                        KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
-                                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                            let pane_height = match app_state.active_pane {
-                                                ActivePane::Source => terminal.size().unwrap_or_default().height,
-                                                ActivePane::Assembly => terminal.size().unwrap_or_default().height,
-                                            };
-                                            app_state.scroll_down(PAGE_AMOUNT, pane_height);
-                                        }
-                                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                            app_state.scroll_up(PAGE_AMOUNT);
-                                        }
-
-                    _ => {}
                 }
             }
         }
@@ -490,7 +540,6 @@ mod tests {
 
     #[test]
     fn test_short_path_shorter_than_depth() {
-        // Fewer components than depth - returned as-is
         assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
         assert_eq!(short_path("short.c", 3), "short.c");
     }

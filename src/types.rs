@@ -23,18 +23,18 @@ impl AnnotatedInstruction {
         let mut result = Vec::new();
         let mut last_src: Option<SourceLocation> = None;
 
-                for inst in instructions {
-                    if let Some(src) = addr_to_src.get(&inst.address) {
-                        last_src = Some(src.clone());
-                    }
-                    result.push(AnnotatedInstruction {
-                        instruction: inst.clone(),
-                        source: last_src.clone(),
-                    });
-                }
-                result
+        for inst in instructions {
+            if let Some(src) = addr_to_src.get(&inst.address) {
+                last_src = Some(src.clone());
             }
+            result.push(AnnotatedInstruction {
+                instruction: inst.clone(),
+                source: last_src.clone(),
+            });
         }
+        result
+    }
+}
 #[derive(Debug, Clone)]
 pub struct DisplayItem {
     pub instruction: Instruction,

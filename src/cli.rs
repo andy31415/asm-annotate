@@ -2,7 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 /// A CLI tool for colored source <-> assembly annotation for ELF files.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     /// The ELF file to process

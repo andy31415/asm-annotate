@@ -152,11 +152,12 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
 
             if (mnemonic.starts_with('b') || mnemonic == "call" || mnemonic == "jmp")
                 && let Some(caps) = HEX_ADDR_RE.captures(op_str)
-                    && let Some(addr_str) = caps.get(1)
-                        && let Ok(target_addr) = u64::from_str_radix(&addr_str.as_str()[2..], 16)
-                            && let Ok(Some(symbol)) = elf_backend.get_symbol_at(&elf_obj, target_addr) {
-                                full_mnemonic.push_str(&format!("  ; <{}>", symbol));
-                            }
+                && let Some(addr_str) = caps.get(1)
+                && let Ok(target_addr) = u64::from_str_radix(&addr_str.as_str()[2..], 16)
+                && let Ok(Some(symbol)) = elf_backend.get_symbol_at(&elf_obj, target_addr)
+            {
+                full_mnemonic.push_str(&format!("  ; <{}>", symbol));
+            }
 
             Instruction {
                 address: insn.address(),

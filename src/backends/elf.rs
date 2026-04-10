@@ -247,7 +247,10 @@ impl ElfBackend for GoblinElfBackend {
             if sym.st_type() == elf::sym::STT_FUNC {
                 let sym_addr = sym.st_value & !1;
                 if sym_addr == addr {
-                    let name = elf.strtab.get_at(sym.st_name).or_else(|| elf.dynstrtab.get_at(sym.st_name));
+                    let name = elf
+                        .strtab
+                        .get_at(sym.st_name)
+                        .or_else(|| elf.dynstrtab.get_at(sym.st_name));
                     if let Some(name) = name {
                         return Ok(Some(name.to_string()));
                     }
@@ -263,7 +266,10 @@ impl ElfBackend for GoblinElfBackend {
             if sym_addr <= addr {
                 let sym_size = sym.st_size;
                 if addr < sym_addr + sym_size {
-                    let name = elf.strtab.get_at(sym.st_name).or_else(|| elf.dynstrtab.get_at(sym.st_name));
+                    let name = elf
+                        .strtab
+                        .get_at(sym.st_name)
+                        .or_else(|| elf.dynstrtab.get_at(sym.st_name));
                     if let Some(name) = name {
                         match best_match {
                             Some((_, best_size)) => {
