@@ -19,6 +19,7 @@ use ratatui::{
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
+use tui_logger::{TuiLoggerWidget, TuiWidgetState};
 
 fn map_color(c: ColoredColor) -> Color {
     match c {
@@ -46,6 +47,7 @@ fn map_color(c: ColoredColor) -> Color {
 enum ActivePane {
     Source,
     Assembly,
+    Logger,
 }
 
 struct AppState {
@@ -56,6 +58,8 @@ struct AppState {
     asm_scroll: u16,
     left_pane_width: u16, // Percentage
     show_help: bool,
+    show_logger: bool,
+    logger_state: TuiLoggerState,
 }
 
 impl AppState {
@@ -188,6 +192,8 @@ impl AppState {
             asm_scroll: 0,
             left_pane_width: 50,
             show_help: false,
+            show_logger: false,
+            logger_state: TuiLoggerState::new(),
         }
     }
 
@@ -199,6 +205,9 @@ impl AppState {
             ActivePane::Assembly => {
                 self.asm_scroll = self.asm_scroll.saturating_add(amount);
             }
+            ActivePane::Logger => {
+                self.logger_state.scroll_down();
+            }
         }
     }
 
@@ -209,6 +218,9 @@ impl AppState {
             }
             ActivePane::Assembly => {
                 self.asm_scroll = self.asm_scroll.saturating_sub(amount);
+            }
+            ActivePane::Logger => {
+                self.logger_state.scroll_up();
             }
         }
     }
@@ -242,6 +254,7 @@ pub fn run_tui(func_name: &str, items: &[DisplayItem], source_reader: &SourceRea
 }
 
 const PAGE_AMOUNT: u16 = 15;
+const LOGGER_HEIGHT: u16 = 10;
 
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
@@ -251,9 +264,13 @@ fn run_app<B: Backend>(
     loop {
         terminal.draw(|f| {
             let size = f.size();
-            let chunks = Layout::default()
+            let main_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(1), Constraint::Min(0)].as_ref())
+                .constraints([
+                    Constraint::Length(1), // Title
+                    Constraint::Min(0),    // Content
+                    Constraint::Length(if app_state.show_logger { LOGGER_HEIGHT } else { 0 }), // Logger
+                ].as_ref())
                 .split(size);
 
             let title_line = Line::from(vec![
@@ -264,9 +281,10 @@ fn run_app<B: Backend>(
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ),
+                Span::raw(" (Press ‘?’ for help, ‘G’ to toggle logs)"),
             ]);
             let title_paragraph = Paragraph::new(title_line).alignment(Alignment::Center);
-            f.render_widget(title_paragraph, chunks[0]);
+            f.render_widget(title_paragraph, main_chunks[0]);
 
             let content_chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -274,7 +292,7 @@ fn run_app<B: Backend>(
                     Constraint::Percentage(app_state.left_pane_width),
                     Constraint::Percentage(100 - app_state.left_pane_width),
                 ].as_ref())
-                .split(chunks[1]);
+                .split(main_chunks[1]);
 
             let source_border_style = if app_state.active_pane == ActivePane::Source && !app_state.show_help {
                 Style::default().fg(Color::Yellow)
@@ -307,16 +325,35 @@ fn run_app<B: Backend>(
                 .scroll((app_state.asm_scroll, 0));
             f.render_widget(right_pane, content_chunks[1]);
 
+            if app_state.show_logger {
+                let logger_border_style = if app_state.active_pane == ActivePane::Logger && !app_state.show_help {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                let logger_widget = TuiLoggerWidget::default()
+                    .block(
+                        Block::default()
+                            .title("Logs (C: Clear, G: Close)")
+                            .border_style(logger_border_style)
+                            .borders(Borders::ALL),
+                    )
+                    .state(&app_state.logger_state);
+                f.render_widget(logger_widget, main_chunks[2]);
+            }
+
             if app_state.show_help {
                 let help_text = Text::from(vec![
                     Line::from(Span::styled("Keybindings", Style::default().add_modifier(Modifier::BOLD))),
                     Line::from(""),
                     Line::from("? / Esc: Toggle Help"),
                     Line::from("q: Quit"),
-                    Line::from("j / Down: Scroll Down"),
-                    Line::from("k / Up: Scroll Up"),
+                    Line::from("j / Down: Scroll Down (in active pane)"),
+                    Line::from("k / Up: Scroll Up (in active pane)"),
                     Line::from("h / Left: Activate Source Pane"),
                     Line::from("l / Right: Activate Assembly Pane"),
+                    Line::from("g: Toggle Logger Pane"),
+                    Line::from("C: Clear Logs (when Logger is active)"),
                     Line::from("PgDown / Ctrl+D: Page Down"),
                     Line::from("PgUp / Ctrl+U: Page Up"),
                     Line::from("Shift + Left / H: Decrease Source Pane Width"),
@@ -327,7 +364,7 @@ fn run_app<B: Backend>(
                     .borders(Borders::ALL)
                     .style(Style::default().fg(Color::White).bg(Color::DarkGray));
 
-                let area = centered_rect(60, 16, size);
+                let area = centered_rect(60, 18, size);
                 let help_paragraph = Paragraph::new(help_text).block(block).alignment(Alignment::Left);
                 f.render_widget(Clear, area);
                 f.render_widget(help_paragraph, area);
@@ -348,6 +385,32 @@ fn run_app<B: Backend>(
                         app_state.show_help = true;
                     }
                     KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('g') => {
+                        app_state.show_logger = !app_state.show_logger;
+                        if !app_state.show_logger && app_state.active_pane == ActivePane::Logger {
+                            app_state.active_pane = ActivePane::Source; // Default back to source
+                        }
+                    }
+                    KeyCode::Char('c') | KeyCode::Char('C') => {
+                        if app_state.active_pane == ActivePane::Logger {
+                            tui_logger::clear_logger();
+                        }
+                    }
+                    KeyCode::Tab => {
+                        if app_state.show_logger {
+                            app_state.active_pane = match app_state.active_pane {
+                                ActivePane::Source => ActivePane::Assembly,
+                                ActivePane::Assembly => ActivePane::Logger,
+                                ActivePane::Logger => ActivePane::Source,
+                            };
+                        } else {
+                            app_state.active_pane = match app_state.active_pane {
+                                ActivePane::Source => ActivePane::Assembly,
+                                ActivePane::Assembly => ActivePane::Source,
+                                ActivePane::Logger => ActivePane::Source, // Should not happen
+                            };
+                        }
+                    }
                     KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
                         app_state.active_pane = ActivePane::Source;
                     }
@@ -429,4 +492,6 @@ mod tests {
         assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
         assert_eq!(short_path("short.c", 3), "short.c");
     }
+}
+}
 }
