@@ -1,9 +1,9 @@
 use color_eyre::eyre::Result;
 use std::collections::HashMap;
-use std::path::Path;
+use std::{fs, path::Path};
 
 use capstone::{Capstone, Insn, arch::BuildsCapstone};
-use elf::file::File as ElfFile;
+use goblin::elf::Elf as ElfFile;
 
 #[derive(Debug, Clone)]
 pub struct Instruction {
@@ -12,58 +12,56 @@ pub struct Instruction {
     pub mnemonic: String,
 }
 
-// fn get_arch_mode(elf_file: &ElfFile) -> Result<(BuildArch, BuildMode)> {
-//     match elf_file.ehdr.machine {
-//         elf::abi::EM_ARM => Ok((BuildArch::new(Arch::ARM), BuildMode::new(Mode::Arm))),
-//         elf::abi::EM_AARCH64 => Ok((BuildArch::new(Arch::ARM64), BuildMode::new(Mode::Arm))),
-//         elf::abi::EM_X86_64 => Ok((BuildArch::new(Arch::X86), BuildMode::new(Mode::Mode64))),
-//         elf::abi::EM_386 => Ok((BuildArch::new(Arch::X86), BuildMode::new(Mode::Mode32))),
-//         _ => Err(color_eyre::eyre::eyre!(
-//             "Unsupported architecture: {:#x}",
-//             elf_file.ehdr.machine
-//         )),
-//     }
-// }
-
 pub fn disassemble_range(
     elf_path: &Path,
     _user_objdump: Option<&str>, // No longer used
     start: u64,
     end: u64,
 ) -> Result<Vec<Instruction>> {
-    let elf_file = ElfFile::open_path(elf_path)
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to open ELF file: {:#?}", e))?;
+    let buffer = fs::read(elf_path)
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to read ELF file: {:#?}", e))?;
+    let elf_obj = ElfFile::parse(&buffer)
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to parse ELF file: {:#?}", e))?;
 
-    // let (arch, mode) = get_arch_mode(&elf_file)?;
-
-    let cs = match elf_file.ehdr.machine {
-        elf::abi::EM_X86_64 => Capstone::new().x86().detail(true).build(),
-        elf::abi::EM_ARM => Capstone::new().arm().detail(true).build(),
-        elf::abi::EM_AARCH64 => Capstone::new().arm64().detail(true).build(),
+    let cs = match elf_obj.header.e_machine {
+        goblin::elf::header::EM_X86_64 => Capstone::new().x86().detail(true).build(),
+        goblin::elf::header::EM_ARM => Capstone::new().arm().detail(true).build(),
+        goblin::elf::header::EM_AARCH64 => Capstone::new().arm64().detail(true).build(),
         _ => Err(capstone::Error::CustomError("Unsupported architecture")),
     }
     .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize Capstone: {}", e))?;
 
     // Find the section containing the range [start, end)
-    let mut section_data = None;
+    let mut section_data: Option<&[u8]> = None;
     let mut section_addr = 0;
 
-    for section in &elf_file.sections {
-        // Adjust bounds check to handle sections that might not start at address 0
-        let section_end = section.shdr.addr.saturating_add(section.shdr.size);
-        if section.shdr.addr <= start && end <= section_end {
-            // Check if the range is within the current section
-            if start >= section.shdr.addr && end <= section.shdr.addr + section.shdr.size {
-                section_data = Some(section.data.clone());
-                section_addr = section.shdr.addr;
-                break;
+    for section in &elf_obj.section_headers {
+        if section.sh_type != goblin::elf::section_header::SHT_PROGBITS {
+            continue;
+        }
+
+        let sh_addr = section.sh_addr;
+        let sh_size = section.sh_size;
+        let section_end = sh_addr.saturating_add(sh_size);
+
+        if sh_addr <= start && end <= section_end {
+            let offset = section.sh_offset as usize;
+            let size = section.sh_size as usize;
+            if offset + size > buffer.len() {
+                return Err(color_eyre::eyre::eyre!(
+                    "Section bounds exceed buffer size for section at offset {:#x}",
+                    offset
+                ));
             }
+            section_data = Some(&buffer[offset..offset + size]);
+            section_addr = sh_addr;
+            break;
         }
     }
 
     let data = section_data.ok_or_else(|| {
         color_eyre::eyre::eyre!(
-            "No section found fully containing the range {:#x}-{:#x}",
+            "No PROGBITS section found fully containing the range {:#x}-{:#x}",
             start,
             end
         )
@@ -77,21 +75,21 @@ pub fn disassemble_range(
         ));
     }
 
-    let offset = start - section_addr;
+    let offset_in_section = start - section_addr;
     let length = end - start;
 
-    if (offset + length) > data.len() as u64 {
+    if (offset_in_section + length) > data.len() as u64 {
         return Err(color_eyre::eyre::eyre!(
             "Disassembly range {:#x}-{:#x} (offset: {}, length: {}) exceeds section bounds (data size: {})",
             start,
             end,
-            offset,
+            offset_in_section,
             length,
             data.len()
         ));
     }
 
-    let code = &data[offset as usize..(offset + length) as usize];
+    let code = &data[offset_in_section as usize..(offset_in_section + length) as usize];
 
     let insns = cs
         .disasm_all(code, start)
