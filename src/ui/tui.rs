@@ -47,7 +47,6 @@ fn map_color(c: ColoredColor) -> Color {
 enum ActivePane {
     Source,
     Assembly,
-    Logger,
 }
 
 struct AppState {
@@ -59,7 +58,7 @@ struct AppState {
     left_pane_width: u16, // Percentage
     show_help: bool,
     show_logger: bool,
-    logger_state: TuiLoggerState,
+    logger_state: TuiWidgetState,
 }
 
 impl AppState {
@@ -193,7 +192,7 @@ impl AppState {
             left_pane_width: 50,
             show_help: false,
             show_logger: false,
-            logger_state: TuiLoggerState::new(),
+            logger_state: TuiWidgetState::new(),
         }
     }
 
@@ -205,9 +204,6 @@ impl AppState {
             ActivePane::Assembly => {
                 self.asm_scroll = self.asm_scroll.saturating_add(amount);
             }
-            ActivePane::Logger => {
-                self.logger_state.scroll_down();
-            }
         }
     }
 
@@ -218,9 +214,6 @@ impl AppState {
             }
             ActivePane::Assembly => {
                 self.asm_scroll = self.asm_scroll.saturating_sub(amount);
-            }
-            ActivePane::Logger => {
-                self.logger_state.scroll_up();
             }
         }
     }
@@ -326,16 +319,10 @@ fn run_app<B: Backend>(
             f.render_widget(right_pane, content_chunks[1]);
 
             if app_state.show_logger {
-                let logger_border_style = if app_state.active_pane == ActivePane::Logger && !app_state.show_help {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default()
-                };
                 let logger_widget = TuiLoggerWidget::default()
                     .block(
                         Block::default()
-                            .title("Logs (C: Clear, G: Close)")
-                            .border_style(logger_border_style)
+                            .title("Logs (G: Close)")
                             .borders(Borders::ALL),
                     )
                     .state(&app_state.logger_state);
@@ -353,7 +340,7 @@ fn run_app<B: Backend>(
                     Line::from("h / Left: Activate Source Pane"),
                     Line::from("l / Right: Activate Assembly Pane"),
                     Line::from("g: Toggle Logger Pane"),
-                    Line::from("C: Clear Logs (when Logger is active)"),
+                    Line::from("Tab: Cycle through Source/Assembly"),
                     Line::from("PgDown / Ctrl+D: Page Down"),
                     Line::from("PgUp / Ctrl+U: Page Up"),
                     Line::from("Shift + Left / H: Decrease Source Pane Width"),
@@ -387,29 +374,12 @@ fn run_app<B: Backend>(
                     KeyCode::Char('q') => return Ok(()),
                     KeyCode::Char('g') => {
                         app_state.show_logger = !app_state.show_logger;
-                        if !app_state.show_logger && app_state.active_pane == ActivePane::Logger {
-                            app_state.active_pane = ActivePane::Source; // Default back to source
-                        }
-                    }
-                    KeyCode::Char('c') | KeyCode::Char('C') => {
-                        if app_state.active_pane == ActivePane::Logger {
-                            tui_logger::clear_logger();
-                        }
                     }
                     KeyCode::Tab => {
-                        if app_state.show_logger {
-                            app_state.active_pane = match app_state.active_pane {
-                                ActivePane::Source => ActivePane::Assembly,
-                                ActivePane::Assembly => ActivePane::Logger,
-                                ActivePane::Logger => ActivePane::Source,
-                            };
-                        } else {
-                            app_state.active_pane = match app_state.active_pane {
-                                ActivePane::Source => ActivePane::Assembly,
-                                ActivePane::Assembly => ActivePane::Source,
-                                ActivePane::Logger => ActivePane::Source, // Should not happen
-                            };
-                        }
+                        app_state.active_pane = match app_state.active_pane {
+                            ActivePane::Source => ActivePane::Assembly,
+                            ActivePane::Assembly => ActivePane::Source,
+                        };
                     }
                     KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
                         app_state.active_pane = ActivePane::Source;
@@ -492,6 +462,4 @@ mod tests {
         assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
         assert_eq!(short_path("short.c", 3), "short.c");
     }
-}
-}
 }
