@@ -9,6 +9,7 @@ use crate::ui::tui::run_tui;
 use color_eyre::eyre::{Context, Result, eyre};
 use log::{error, info, warn};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use regex::Regex;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -172,7 +173,7 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
         );
     }
 
-    let instructions = match crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr) {
+    let mut instructions = match crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr) {
         Ok(inst) => inst,
         Err(e) => return Err(eyre!("Failed to disassemble: {}", e)),
     };
@@ -181,6 +182,33 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
         warn!("No instructions found in range.");
     } else {
         info!("Disassembled {} instructions.", instructions.len());
+    }
+
+    if !args.no_demangle {
+        let mut names_to_demangle = vec![];
+        let mangled_regex = Regex::new(r"_Z[a-zA-Z0-9_]+").unwrap();
+        for inst in &instructions {
+            // Add symbols from branch targets
+            if let Some(comment) = inst.mnemonic.split_once(" ; <") {
+                if let Some(mangled) = comment.1.strip_suffix('>') {
+                    if mangled.starts_with("_Z") {
+                        names_to_demangle.push(mangled.to_string());
+                    }
+                }
+            }
+            // Add symbols from instruction operands
+            for cap in mangled_regex.captures_iter(&inst.mnemonic) {
+                names_to_demangle.push(cap[0].to_string());
+            }
+        }
+        names_to_demangle.sort();
+        names_to_demangle.dedup();
+
+        if !names_to_demangle.is_empty() {
+            info!("Demangling {} symbols from instructions...", names_to_demangle.len());
+            let demangled_map = demangler_backend.demangle_batch(&names_to_demangle)?;
+            crate::backends::disasm::apply_demangling(&mut instructions, &demangled_map);
+        }
     }
 
     let annotated_instructions = AnnotatedInstruction::from_many(&instructions, &addr_to_src);
