@@ -1,15 +1,12 @@
-#![allow(unused_imports)]
 use crate::types::SourceLocation;
 use color_eyre::eyre::{Context, Result};
 use goblin::elf;
-use log;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gimli::read::{self as _, Dwarf, EndianSlice};
-use gimli::{AttributeValue, DebugAddr, LineProgramHeader, LineRow, RunTimeEndian, SectionId};
+use gimli::read::{Dwarf, EndianSlice};
+use gimli::{AttributeValue, LineProgramHeader, LineRow, RunTimeEndian, SectionId};
 
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {

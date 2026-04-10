@@ -6,7 +6,6 @@ pub trait DemanglerBackend {
     fn demangle_batch(&self, names: &[String]) -> Result<HashMap<String, String>>;
 }
 
-// TODO: Implement CppDemangleBackend
 pub struct CppDemangleBackend;
 
 impl DemanglerBackend for CppDemangleBackend {
@@ -31,5 +30,36 @@ impl DemanglerBackend for CppDemangleBackend {
             }
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_demangle_basic() {
+        let backend = CppDemangleBackend;
+        assert_eq!(backend.demangle("_Z3foov").unwrap(), "foo()");
+        assert_eq!(backend.demangle("_Z3bariz").unwrap(), "bar(int, ...)");
+    }
+
+    #[test]
+    fn test_demangle_not_mangled() {
+        let backend = CppDemangleBackend;
+        assert!(backend.demangle("not_mangled").is_err());
+    }
+
+    #[test]
+    fn test_demangle_batch_skips_failures() {
+        let backend = CppDemangleBackend;
+        let names = vec![
+            "_Z3foov".to_string(),
+            "not_mangled".to_string(),
+        ];
+        let result = backend.demangle_batch(&names).unwrap();
+        assert_eq!(result.get("_Z3foov").unwrap(), "foo()");
+        // Non-mangled names are silently skipped
+        assert!(!result.contains_key("not_mangled"));
     }
 }

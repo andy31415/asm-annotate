@@ -1,7 +1,7 @@
 use color_eyre::eyre::{Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Default)]
 pub struct SourceReader {

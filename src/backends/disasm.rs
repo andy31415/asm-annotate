@@ -1,21 +1,51 @@
-#![allow(unused_imports)]
 use color_eyre::eyre::{Context, Result};
-use goblin::elf;
-use log;
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 use std::process::Command;
-
-// TODO: Add capstone to Cargo.toml and uncomment
-// use capstone::prelude::*;
-use cpp_demangle::{DemangleOptions, ParseOptions};
 
 #[derive(Debug, Clone)]
 pub struct Instruction {
     pub address: u64,
     pub bytes: String,
     pub mnemonic: String,
+}
+
+/// Parses the text output of `objdump -d` into a list of instructions.
+/// Skips header lines until the first function header (`<name>:`), then
+/// parses tab-separated `address : bytes : mnemonic` lines.
+pub(crate) fn parse_objdump_output(stdout: &str) -> Vec<Instruction> {
+    let mut instructions = Vec::new();
+    let mut lines = stdout.lines().peekable();
+
+    // Skip header lines until we find the disassembly section
+    while let Some(line) = lines.peek() {
+        if line.ends_with(">:") {
+            break;
+        }
+        lines.next();
+    }
+    lines.next(); // Skip the function name line itself
+
+    for line in lines {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let addr_str = parts[0].trim().strip_suffix(':').unwrap_or(parts[0].trim());
+        let addr = match u64::from_str_radix(addr_str, 16) {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
+
+        instructions.push(Instruction {
+            address: addr,
+            bytes: parts[1].trim().to_string(),
+            mnemonic: parts[2..].join(" ").trim().to_string(),
+        });
+    }
+
+    instructions
 }
 
 fn try_disassemble(
@@ -49,39 +79,7 @@ fn try_disassemble(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut instructions = Vec::new();
-    let mut lines = stdout.lines().peekable();
-
-    // Skip header lines until we find the disassembly
-    while let Some(line) = lines.peek() {
-        if line.ends_with(">:") {
-            break;
-        }
-        lines.next();
-    }
-    lines.next(); // Skip the line with the function name
-
-    for line in lines {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-
-        let addr_str = parts[0].trim().strip_suffix(':').unwrap_or(parts[0].trim());
-        let addr = match u64::from_str_radix(addr_str, 16) {
-            Ok(a) => a,
-            Err(_) => continue,
-        };
-
-        let bytes = parts[1].trim();
-        let mnemonic = parts[2..].join(" ").trim().to_string();
-
-        instructions.push(Instruction {
-            address: addr,
-            bytes: bytes.to_string(),
-            mnemonic: mnemonic.to_string(),
-        });
-    }
+    let instructions = parse_objdump_output(&stdout);
 
     if instructions.is_empty() {
         return Err(color_eyre::eyre::eyre!(
@@ -99,13 +97,16 @@ pub fn disassemble_range(
     start: u64,
     end: u64,
 ) -> Result<Vec<Instruction>> {
-    let default_bins = vec!["arm-none-eabi-objdump", "objdump"];
-    let mut objdump_bins: Vec<&str> = default_bins.clone();
-
-    if let Some(bin) = user_objdump
-        && !default_bins.contains(&bin)
-    {
+    // User-specified binary is tried first; defaults follow in detection order.
+    const DEFAULT_BINS: &[&str] = &["arm-none-eabi-objdump", "llvm-objdump", "objdump"];
+    let mut objdump_bins: Vec<&str> = Vec::new();
+    if let Some(bin) = user_objdump {
         objdump_bins.push(bin);
+    }
+    for bin in DEFAULT_BINS {
+        if !objdump_bins.contains(bin) {
+            objdump_bins.push(bin);
+        }
     }
 
     for bin in &objdump_bins {
@@ -158,19 +159,32 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_demangle_batch() {
-        let names = vec![
-            "_Z3foov".to_string(),
-            "_Z3bariz".to_string(),
-            "not_mangled".to_string(),
-        ];
-        let demangled = demangle_batch(names);
+    fn test_parse_objdump_output() {
+        let output = "\
+firmware.elf:     file format elf32-littlearm
 
-        let mut expected = HashMap::new();
-        expected.insert("_Z3foov".to_string(), "foo()".to_string());
-        expected.insert("_Z3bariz".to_string(), "bar(int, ...)".to_string());
+Disassembly of section .text:
 
-        assert_eq!(demangled, expected);
+00010000 <my_func>:
+   10000:\tf0 b5       \tpush\t{r4, r5, r6, r7, lr}
+   10002:\t00 af       \tadd\tr7, sp, #0
+   10004:\te8 bd f0    \tpop\t{r4, r5, r6, r7, pc}
+";
+        let instructions = parse_objdump_output(output);
+        assert_eq!(instructions.len(), 3);
+        assert_eq!(instructions[0].address, 0x10000);
+        assert_eq!(instructions[0].bytes, "f0 b5");
+        // Fields are joined with spaces (tabs replaced), mnemonic may have extra columns
+        assert_eq!(instructions[0].mnemonic, "push {r4, r5, r6, r7, lr}");
+        assert_eq!(instructions[1].address, 0x10002);
+        assert_eq!(instructions[2].address, 0x10004);
+    }
+
+    #[test]
+    fn test_parse_objdump_output_empty() {
+        let output = "firmware.elf:     file format elf32-littlearm\n\n";
+        let instructions = parse_objdump_output(output);
+        assert!(instructions.is_empty());
     }
 
     #[test]
@@ -191,11 +205,20 @@ mod tests {
         demangled_map.insert("_Z3foov".to_string(), "foo()".to_string());
         demangled_map.insert("_Z3bariz".to_string(), "bar(int, ...)".to_string());
 
-        let func_name = "_Z3bariz".to_string();
-        let new_func_name = apply_demangling(func_name, &mut instructions, &demangled_map);
+        let new_func_name =
+            apply_demangling("_Z3bariz".to_string(), &mut instructions, &demangled_map);
 
         assert_eq!(new_func_name, "bar(int, ...)");
         assert_eq!(instructions[0].mnemonic, "ret");
         assert_eq!(instructions[1].mnemonic, "call foo()");
+    }
+
+    #[test]
+    fn test_apply_demangling_unknown_func() {
+        let mut instructions = vec![];
+        let demangled_map = HashMap::new();
+        // Function name not in map → returned unchanged
+        let name = apply_demangling("plain_func".to_string(), &mut instructions, &demangled_map);
+        assert_eq!(name, "plain_func");
     }
 }

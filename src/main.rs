@@ -1,8 +1,6 @@
-#![allow(unused_imports)]
 use clap::Parser;
-use color_eyre::eyre::{self, Context, Result};
+use color_eyre::eyre::Result;
 use env_logger::Env;
-use log::{debug, info};
 
 mod backends;
 mod cli;
@@ -19,7 +17,6 @@ fn main() -> Result<()> {
         .init();
     color_eyre::install()?;
 
-    // TODO: Implement command dispatch
     match &cli.command {
         Some(cli::Commands::List(args)) => {
             commands::list::handle_list(args)?;

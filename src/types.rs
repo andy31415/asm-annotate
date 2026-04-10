@@ -3,6 +3,21 @@ use crate::source_reader::SourceReader;
 use colored::*;
 use std::collections::HashMap;
 
+const UI_PALETTE: &[Color] = &[
+    Color::Red,
+    Color::Green,
+    Color::Yellow,
+    Color::Blue,
+    Color::Magenta,
+    Color::Cyan,
+    Color::BrightRed,
+    Color::BrightGreen,
+    Color::BrightYellow,
+    Color::BrightBlue,
+    Color::BrightMagenta,
+    Color::BrightCyan,
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceLocation {
     pub file: String,
@@ -50,22 +65,6 @@ impl DisplayItem {
         let mut color_idx = 0;
         let mut prev_source: Option<SourceLocation> = None;
         let mut prev_file: Option<String> = None;
-
-        // Simplified color palette from colored crate
-        const UI_PALETTE: &[Color] = &[
-            Color::Red,
-            Color::Green,
-            Color::Yellow,
-            Color::Blue,
-            Color::Magenta,
-            Color::Cyan,
-            Color::BrightRed,
-            Color::BrightGreen,
-            Color::BrightYellow,
-            Color::BrightBlue,
-            Color::BrightMagenta,
-            Color::BrightCyan,
-        ];
 
         for ai in annotated_instructions {
             let mut color = Color::White;

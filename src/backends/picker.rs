@@ -28,7 +28,10 @@ impl PickerBackend for SkimBackend {
             .spawn()
             .wrap_err("Failed to spawn skim (sk). Is it installed?")?;
 
-        let stdin = skim_child.stdin.as_mut().unwrap();
+        let stdin = skim_child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| eyre!("Failed to open skim stdin"))?;
         for func in &functions {
             let demangled = demangler
                 .demangle(&func.name)

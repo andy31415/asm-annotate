@@ -1,9 +1,9 @@
-use crate::backends::disasm::Instruction;
 use crate::source_reader::SourceReader;
-use crate::types::{DisplayItem, SourceLocation};
+use crate::types::DisplayItem;
 use colored::*;
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
 
 pub trait Renderer {
@@ -66,9 +66,11 @@ pub struct SplitRenderer {
     pub asm_width: usize,
 }
 
-// Helper to strip ANSI escape codes
+static ANSI_RE: OnceLock<Regex> = OnceLock::new();
+
+/// Strips ANSI escape codes from a string.
 fn strip_ansi(s: &str) -> String {
-    let re = Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").unwrap();
+    let re = ANSI_RE.get_or_init(|| Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").unwrap());
     re.replace_all(s, "").into_owned()
 }
 
@@ -250,11 +252,6 @@ fn short_path(path_str: &str, depth: usize) -> String {
     }
 }
 
-// TODO: Implement render_stats_table
-pub fn render_stats_table() -> color_eyre::Result<()> {
-    Ok(())
-}
-
 // New SideBySideRenderer
 pub struct SideBySideRenderer {
     pub show_bytes: bool,
@@ -405,5 +402,37 @@ impl Renderer for SideBySideRenderer {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_short_path_longer_than_depth() {
+        assert_eq!(short_path("/a/b/c/d.c", 3), "…/b/c/d.c");
+    }
+
+    #[test]
+    fn test_short_path_shorter_than_depth() {
+        // Fewer components than depth — returned as-is
+        assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
+        assert_eq!(short_path("short.c", 3), "short.c");
+    }
+
+    #[test]
+    fn test_strip_ansi_removes_color_codes() {
+        assert_eq!(strip_ansi("\x1B[31mRed\x1B[0m"), "Red");
+        assert_eq!(
+            strip_ansi("\x1B[1;32mBold Green\x1B[0m text"),
+            "Bold Green text"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_passthrough() {
+        assert_eq!(strip_ansi("no escape codes"), "no escape codes");
+        assert_eq!(strip_ansi(""), "");
     }
 }
