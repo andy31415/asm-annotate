@@ -1,4 +1,7 @@
+//! Command handler for the "annotate" action.
+
 use crate::backends::demangle::{CppDemangleBackend, DemanglerBackend};
+use crate::backends::disasm::Instruction;
 use crate::backends::elf::{ElfBackend, FunctionInfo, GoblinElfBackend};
 use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::Cli;
@@ -10,10 +13,23 @@ use color_eyre::eyre::{Context, Result, eyre};
 use log::{error, info, warn};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use regex::Regex;
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+/// Handles the main logic for annotating a function.
+///
+/// This includes:
+/// - Listing functions from the ELF file.
+/// - Allowing the user to select a function if necessary.
+/// - Setting up a file watcher to reload data on changes.
+/// - Loading the annotation data.
+/// - Running the Terminal User Interface.
+///
+/// # Arguments
+///
+/// * `args` - The parsed command line arguments.
 pub fn handle_annotate(args: &Cli) -> Result<()> {
     let elf_backend = GoblinElfBackend;
     let demangler_backend = CppDemangleBackend;
@@ -124,12 +140,54 @@ pub fn handle_annotate(args: &Cli) -> Result<()> {
     Ok(())
 }
 
+/// Contains all the data required to display the annotation in the TUI.
 pub struct AnnotationData {
+    /// The list of items to display, including instructions, source, and color.
     pub display_items: Vec<DisplayItem>,
+    /// The source reader instance for accessing source file contents.
     pub source_reader: SourceReader,
+    /// The display name of the function being annotated (potentially demangled).
     pub display_name: String,
 }
 
+// Extracts mangled symbols from instruction mnemonics and comments.
+fn extract_mangled_symbols(instructions: &[Instruction]) -> Vec<String> {
+    let mut names_to_demangle = HashSet::new();
+    let mangled_regex = Regex::new(r"_Z[a-zA-Z0-9_]+").unwrap();
+
+    for inst in instructions {
+        // Add symbols from branch targets in comments (e.g., "  ; <_Z1fv>")
+        if let Some(comment) = inst.mnemonic.split_once(" ; <") {
+            if let Some(mangled) = comment.1.strip_suffix('>') {
+                if mangled.starts_with("_Z") {
+                    names_to_demangle.insert(mangled.to_string());
+                }
+            }
+        }
+        // Add symbols from instruction operands
+        for cap in mangled_regex.captures_iter(&inst.mnemonic) {
+            names_to_demangle.insert(cap[0].to_string());
+        }
+    }
+
+    let mut sorted_names: Vec<String> = names_to_demangle.into_iter().collect();
+    sorted_names.sort();
+    sorted_names
+}
+
+/// Loads all necessary data for annotating a function.
+///
+/// This involves:
+/// - Getting function boundaries.
+/// - Building address-to-source map from DWARF.
+/// - Disassembling the function.
+/// - Extracting and demangling symbols from the assembly.
+/// - Preparing display items for the TUI.
+///
+/// # Arguments
+///
+/// * `args` - The parsed command line arguments.
+/// * `func_name` - The (potentially mangled) name of the function to load.
 pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationData> {
     let elf_backend = GoblinElfBackend;
     let demangler_backend = CppDemangleBackend;
@@ -185,25 +243,7 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
     }
 
     if !args.no_demangle {
-        let mut names_to_demangle = vec![];
-        let mangled_regex = Regex::new(r"_Z[a-zA-Z0-9_]+").unwrap();
-        for inst in &instructions {
-            // Add symbols from branch targets
-            if let Some(comment) = inst.mnemonic.split_once(" ; <") {
-                if let Some(mangled) = comment.1.strip_suffix('>') {
-                    if mangled.starts_with("_Z") {
-                        names_to_demangle.push(mangled.to_string());
-                    }
-                }
-            }
-            // Add symbols from instruction operands
-            for cap in mangled_regex.captures_iter(&inst.mnemonic) {
-                names_to_demangle.push(cap[0].to_string());
-            }
-        }
-        names_to_demangle.sort();
-        names_to_demangle.dedup();
-
+        let names_to_demangle = extract_mangled_symbols(&instructions);
         if !names_to_demangle.is_empty() {
             info!("Demangling {} symbols from instructions...", names_to_demangle.len());
             let demangled_map = demangler_backend.demangle_batch(&names_to_demangle)?;
