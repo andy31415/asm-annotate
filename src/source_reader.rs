@@ -1,14 +1,33 @@
+//! Provides a utility for reading lines from source files with path remapping.
+
 use color_eyre::eyre::{Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
+/// Reads source files, allowing for path remappings.
+///
+/// This is useful when debug information contains paths that don't directly
+/// match the local filesystem, for example, paths from a build server.
 #[derive(Debug, Default)]
 pub struct SourceReader {
     remappings: Vec<(PathBuf, PathBuf)>,
 }
 
 impl SourceReader {
+    /// Creates a new `SourceReader` with the given path remappings.
+    ///
+    /// Remappings are provided as a flat list of strings, alternating
+    /// between the old prefix and the new prefix.
+    ///
+    /// # Arguments
+    ///
+    /// * `remaps` - A slice of strings representing `OLD_PREFIX NEW_PREFIX` pairs.
+    ///              Example: `["/build/path", "/local/path", "/other/build", "/other/local"]`
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `SourceReader` or an error if remaps are not balanced.
     pub fn new(remaps: &[String]) -> Result<Self> {
         let mut remappings = Vec::new();
         if !remaps.len().is_multiple_of(2) {
@@ -23,6 +42,7 @@ impl SourceReader {
         Ok(Self { remappings })
     }
 
+    // Applies the configured remappings to the given path.
     fn apply_remaps(&self, path: &str) -> PathBuf {
         let original_path = PathBuf::from(path);
         for (old_prefix, new_prefix) in &self.remappings {
@@ -35,6 +55,20 @@ impl SourceReader {
         original_path
     }
 
+    /// Reads a specific line from a source file, applying path remappings.
+    ///
+    /// Line numbers are 1-based.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - The original path to the source file (before remapping).
+    /// * `line_number` - The 1-based line number to read.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing `Some(line_content)` if the line is read successfully,
+    /// `Ok(None)` if the file is not found, the line number is out of bounds, or line_number is 0.
+    /// Returns an error if there is an IO issue while reading the file.
     pub fn read_line(&self, file_path: &str, line_number: usize) -> Result<Option<String>> {
         if line_number == 0 {
             return Ok(None); // Line numbers are 1-based
