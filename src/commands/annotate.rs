@@ -17,7 +17,7 @@ fn terminal_columns() -> usize {
     }
 }
 use color_eyre::eyre::{Context, Result, eyre};
-use log::info;
+use log::{info, warn};
 
 pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let elf_backend = GoblinElfBackend;
@@ -95,7 +95,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         .build_addr_to_src(&args.elf)
         .wrap_err("Failed to build address to source mapping")?;
     if addr_to_src.is_empty() {
-        eprintln!("Warning: No DWARF info found. Build with -g to get source mapping.");
+        warn!("No DWARF info found. Build with -g to get source mapping.");
     } else {
         info!(
             "Built address to source mapping with {} entries.",

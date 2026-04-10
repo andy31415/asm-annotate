@@ -78,8 +78,6 @@ impl PickerBackend for SkimBackend {
                 } else {
                     // Since multi is false, we expect at most one item
                     let selected_item = selected_items[0].clone();
-                    eprintln!("Selected item type: {:?}", selected_item.as_any().type_id());
-                    eprintln!("SkimItemWrapper type: {:?}", std::any::TypeId::of::<SkimItemWrapper>());
                     let wrapper = (*selected_item)
                         .as_any()
                         .downcast_ref::<SkimItemWrapper>()

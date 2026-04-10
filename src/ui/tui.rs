@@ -8,6 +8,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use log::error;
 use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
@@ -236,7 +237,7 @@ pub fn run_tui(func_name: &str, items: &[DisplayItem], source_reader: &SourceRea
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        println!("{:?}", err)
+        error!("{:?}", err);
     }
 
     Ok(())
