@@ -1,6 +1,5 @@
 use crate::source_reader::SourceReader;
 use crate::types::DisplayItem;
-use crate::ui::short_path;
 use color_eyre::eyre::Result;
 use colored::Color as ColoredColor;
 use crossterm::{
@@ -19,6 +18,7 @@ use ratatui::{
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io;
+use std::path::{Path, PathBuf};
 
 fn map_color(c: ColoredColor) -> Color {
     match c {
@@ -319,5 +319,38 @@ fn run_app<B: Backend>(
                 _ => {}
             }
         }
+    }
+}
+
+// Helper to shorten paths
+fn short_path(path_str: &str, depth: usize) -> String {
+    let path = Path::new(path_str);
+    let components: Vec<&std::ffi::OsStr> = path.components().map(|c| c.as_os_str()).collect();
+    if components.len() > depth {
+        let start_index = components.len() - depth;
+        let mut result = PathBuf::from("…");
+        for component in components.iter().skip(start_index) {
+            result.push(component);
+        }
+        result.to_string_lossy().to_string()
+    } else {
+        path_str.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_short_path_longer_than_depth() {
+        assert_eq!(short_path("/a/b/c/d.c", 3), "…/b/c/d.c");
+    }
+
+    #[test]
+    fn test_short_path_shorter_than_depth() {
+        // Fewer components than depth — returned as-is
+        assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
+        assert_eq!(short_path("short.c", 3), "short.c");
     }
 }

@@ -4,18 +4,8 @@ use crate::backends::picker::{PickerBackend, SkimBackend};
 use crate::cli::AnnotateArgs;
 use crate::source_reader::SourceReader;
 use crate::types::{AnnotatedInstruction, DisplayItem};
-use crate::ui::{Renderer, SplitRenderer, UnifiedRenderer, compute_source_width};
+use crate::ui::tui::run_tui;
 
-const SEP_WIDTH: usize = 3; // " | "
-
-fn terminal_columns() -> usize {
-    use terminal_size::{Width, terminal_size};
-    if let Some((Width(w), _)) = terminal_size() {
-        w as usize
-    } else {
-        120
-    }
-}
 use color_eyre::eyre::{Context, Result, eyre};
 use log::{info, warn};
 
@@ -108,8 +98,11 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr)
             .wrap_err("Failed to disassemble")?;
     if instructions.is_empty() {
-        eprintln!("Warning: No instructions found in range.");
+        warn!("No instructions found in range.");
+    } else {
+        info!("Disassembled {} instructions.", instructions.len());
     }
+
     // 4. Demangle names
     let final_func_name = if !args.no_demangle {
         let mut names_to_demangle = vec![selected_function.name.clone()];
@@ -141,49 +134,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let display_items = DisplayItem::from_annotated(&annotated_instructions, &source_reader)?;
 
     // 7. Render output
-    if args.format == "tui" {
-        crate::ui::tui::run_tui(&final_func_name, &display_items, &source_reader)?;
-    } else {
-        let term_width = terminal_columns();
-
-        let renderer: Box<dyn Renderer> = if args.format == "unified" {
-            Box::new(UnifiedRenderer {
-                show_bytes: args.bytes,
-            })
-        } else if args.format.starts_with("split") {
-            let parts: Vec<&str> = args.format.splitn(2, ':').collect();
-            let source_width = parts
-                .get(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| compute_source_width(&display_items, term_width));
-            let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
-            Box::new(SplitRenderer {
-                show_bytes: args.bytes,
-                source_width,
-                asm_width,
-            })
-        } else if args.format == "sidebyside" {
-            let source_width = compute_source_width(&display_items, term_width);
-            let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
-            Box::new(crate::ui::SideBySideRenderer {
-                show_bytes: args.bytes,
-                context_lines: 5,
-                source_width,
-                asm_width,
-            })
-        } else {
-            // Default to split
-            let source_width = compute_source_width(&display_items, term_width);
-            let asm_width = term_width.saturating_sub(source_width + SEP_WIDTH);
-            Box::new(SplitRenderer {
-                show_bytes: args.bytes,
-                source_width,
-                asm_width,
-            })
-        };
-
-        renderer.render(&final_func_name, &display_items, &source_reader)?;
-    }
+    run_tui(&final_func_name, &display_items, &source_reader)?;
 
     Ok(())
 }
