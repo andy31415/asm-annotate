@@ -1,5 +1,6 @@
 use crate::source_reader::SourceReader;
 use crate::types::DisplayItem;
+use crate::ui::short_path;
 use color_eyre::eyre::Result;
 use colored::Color as ColoredColor;
 use crossterm::{
@@ -15,6 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 fn map_color(c: ColoredColor) -> Color {
@@ -39,10 +41,149 @@ fn map_color(c: ColoredColor) -> Color {
     }
 }
 
+struct AppState {
+    source_lines: Vec<Line<'static>>,
+    asm_lines: Vec<Line<'static>>,
+}
+
+impl AppState {
+    fn new(items: &[DisplayItem], source_reader: &SourceReader, context_lines: usize) -> Self {
+        // --- Prepare Assembly Lines ---
+        let asm_lines: Vec<Line<'static>> = items
+            .iter()
+            .map(|item| {
+                let item_color = map_color(item.color);
+                let asm_style = Style::default().fg(item_color);
+                let bytes_str = if item.instruction.bytes.is_empty() {
+                    "".to_string()
+                } else {
+                    format!("{:<16}  ", item.instruction.bytes)
+                };
+                Line::from(vec![
+                    Span::raw(format!("    {:08x}  ", item.instruction.address)),
+                    Span::styled(
+                        bytes_str,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::DIM),
+                    ),
+                    Span::styled(
+                        item.instruction.mnemonic.clone(),
+                        asm_style.add_modifier(Modifier::BOLD),
+                    ),
+                ])
+            })
+            .collect();
+
+        // --- Prepare Source Lines (SideBySideRenderer logic) ---
+        let mut source_map: BTreeMap<String, BTreeMap<usize, ()>> = BTreeMap::new();
+        let mut file_line_color: HashMap<(String, usize), Color> = HashMap::new();
+
+        for item in items {
+            if let Some(ref src) = item.source {
+                source_map
+                    .entry(src.file.clone())
+                    .or_default()
+                    .insert(src.line, ());
+                file_line_color
+                    .entry((src.file.clone(), src.line))
+                    .or_insert(map_color(item.color));
+            }
+        }
+
+        let mut source_lines: Vec<Line<'static>> = Vec::new();
+        for (file, lines) in &source_map {
+            source_lines.push(Line::from(Span::styled(
+                format!("-- {} --", short_path(file, 3)),
+                Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC),
+            )));
+
+            if lines.is_empty() {
+                continue;
+            }
+
+            let mut sorted_asm_lines: Vec<usize> = lines.keys().cloned().collect();
+            sorted_asm_lines.sort();
+
+            let mut ranges: Vec<(usize, usize)> = Vec::new();
+            let mut i = 0;
+            while i < sorted_asm_lines.len() {
+                let current_asm_line = sorted_asm_lines[i];
+                let start = std::cmp::max(1, current_asm_line.saturating_sub(context_lines));
+                let mut end = current_asm_line + context_lines;
+                let mut j = i + 1;
+                while j < sorted_asm_lines.len() {
+                    let next_asm_line = sorted_asm_lines[j];
+                    if std::cmp::max(1, next_asm_line.saturating_sub(context_lines)) <= end + 1 {
+                        end = next_asm_line + context_lines;
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                ranges.push((start, end));
+                i = j;
+            }
+
+            let mut last_printed_line: Option<usize> = None;
+            for (start, end) in ranges {
+                if let Some(last) = last_printed_line
+                    && start > last + 1
+                {
+                    let line_num_str = format!("{:>4}:", "");
+                    source_lines.push(Line::from(Span::styled(
+                        format!("{} ~", line_num_str),
+                        Style::default().add_modifier(Modifier::DIM),
+                    )));
+                }
+
+                for l in start..=end {
+                    let color = file_line_color.get(&(file.clone(), l));
+                    let line_content = source_reader
+                        .read_line(file, l)
+                        .unwrap_or(None)
+                        .unwrap_or_default();
+                    let is_main = lines.contains_key(&l);
+
+                    let line_num_str = format!("{:>4}: ", l);
+                    let base_style = color.map_or(Style::default(), |c| Style::default().fg(*c));
+
+                    let styled_content = if is_main {
+                        Line::from(vec![
+                            Span::styled(
+                                line_num_str,
+                                base_style.add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled("▶ ", base_style.add_modifier(Modifier::BOLD)),
+                            Span::styled(line_content, base_style),
+                        ])
+                    } else {
+                        Line::from(vec![
+                            Span::styled(
+                                line_num_str,
+                                Style::default().add_modifier(Modifier::DIM),
+                            ),
+                            Span::raw("    "),
+                            Span::styled(
+                                line_content,
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ])
+                    };
+                    source_lines.push(styled_content);
+                }
+                last_printed_line = Some(end);
+            }
+        }
+
+        AppState { source_lines, asm_lines }
+    }
+}
+
 pub fn run_tui(
     func_name: &str,
     items: &[DisplayItem],
-    _source_reader: &SourceReader,
+    source_reader: &SourceReader,
 ) -> Result<()> {
     // setup terminal
     enable_raw_mode()?;
@@ -51,8 +192,8 @@ pub fn run_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // create app and run it
-    let res = run_app(&mut terminal, func_name, items);
+    let app_state = AppState::new(items, source_reader, 5); // 5 lines of context
+    let res = run_app(&mut terminal, func_name, app_state);
 
     // restore terminal
     disable_raw_mode()?;
@@ -70,7 +211,7 @@ pub fn run_tui(
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, func_name: &str, items: &[DisplayItem]) -> Result<()> {
+fn run_app<B: Backend>(terminal: &mut Terminal<B>, func_name: &str, app_state: AppState) -> Result<()> {
     loop {
         terminal.draw(|f| {
             let chunks = Layout::default()
@@ -78,73 +219,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, func_name: &str, items: &[Dis
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
                 .split(f.size());
 
-            // Prepare content for panes
-            let mut source_lines: Vec<Line> = Vec::new();
-            let mut asm_lines: Vec<Line> = Vec::new();
-            let mut last_file: Option<String> = None;
-            let mut last_line: Option<usize> = None;
-
-            for item in items {
-                // Assembly Line
-                let item_color = map_color(item.color);
-                let asm_style = Style::default().fg(item_color);
-
-                let bytes_str = if item.instruction.bytes.is_empty() {
-                    "".to_string()
-                } else {
-                    format!("{:<16}  ", item.instruction.bytes)
-                };
-                asm_lines.push(Line::from(vec![
-                    Span::raw(format!("    {:08x}  ", item.instruction.address)),
-                    Span::styled(
-                        bytes_str,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::DIM),
-                    ),
-                    Span::styled(
-                        item.instruction.mnemonic.clone(),
-                        asm_style.add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-
-                // Source Line
-                if let Some(ref src) = item.source {
-                    if item.is_new_file && last_file.as_ref() != Some(&src.file) {
-                        source_lines.push(Line::from(Span::styled(
-                            format!("-- {} --", src.file),
-                            Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC),
-                        )));
-                    }
-
-                    if item.is_new_line && (last_file.as_ref() != Some(&src.file) || last_line != Some(src.line)) {
-                        let line_num_str = format!("{:>4}: ", src.line);
-                        let marker = "▶ ";
-                        let empty_string = "".to_string();
-                        let content = item.source_text.as_ref().unwrap_or(&empty_string);
-
-                        source_lines.push(Line::from(vec![
-                            Span::styled(line_num_str, asm_style.add_modifier(Modifier::BOLD)),
-                            Span::styled(marker, asm_style.add_modifier(Modifier::BOLD)),
-                            Span::styled(content.clone(), asm_style),
-                        ]));
-                    } else {
-                        // Add empty line to keep source and asm in sync for scrolling
-                        source_lines.push(Line::from(""));
-                    }
-                    last_file = Some(src.file.clone());
-                    last_line = Some(src.line);
-                } else {
-                    // Add empty line to keep source and asm in sync for scrolling
-                    source_lines.push(Line::from(""));
-                }
-            }
-
-            let left_pane = Paragraph::new(source_lines)
+            let left_pane = Paragraph::new(app_state.source_lines.clone())
                 .block(Block::default().borders(Borders::ALL).title(format!("Source - {}", func_name)));
             f.render_widget(left_pane, chunks[0]);
 
-            let right_pane = Paragraph::new(asm_lines)
+            let right_pane = Paragraph::new(app_state.asm_lines.clone())
                 .block(Block::default().borders(Borders::ALL).title("Assembly"));
             f.render_widget(right_pane, chunks[1]);
         })?;
