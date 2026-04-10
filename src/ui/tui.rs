@@ -196,16 +196,31 @@ impl AppState {
         }
     }
 
-    fn scroll_down(&mut self, amount: u16) {
-        match self.active_pane {
-            ActivePane::Source => {
-                self.source_scroll = self.source_scroll.saturating_add(amount);
+            fn scroll_down(&mut self, amount: u16, _pane_height: u16) {
+                let min_visible_lines: u16 = 5;
+
+                match self.active_pane {
+
+                    ActivePane::Source => {
+                        let content_height = self.source_lines.len() as u16;
+                        if content_height > min_visible_lines {
+                            let max_scroll = content_height.saturating_sub(min_visible_lines);
+                            self.source_scroll = self.source_scroll.saturating_add(amount).min(max_scroll);
+                        } else {
+                            self.source_scroll = 0; // Not enough lines to scroll
+                        }
+                    }
+                    ActivePane::Assembly => {
+                        let content_height = self.asm_lines.len() as u16;
+                        if content_height > min_visible_lines {
+                            let max_scroll = content_height.saturating_sub(min_visible_lines);
+                            self.asm_scroll = self.asm_scroll.saturating_add(amount).min(max_scroll);
+                        } else {
+                            self.asm_scroll = 0; // Not enough lines to scroll
+                        }
+                    }
+                }
             }
-            ActivePane::Assembly => {
-                self.asm_scroll = self.asm_scroll.saturating_add(amount);
-            }
-        }
-    }
 
     fn scroll_up(&mut self, amount: u16) {
         match self.active_pane {
@@ -393,16 +408,33 @@ fn run_app<B: Backend>(
                     KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
                         app_state.left_pane_width = app_state.left_pane_width.saturating_add(5).min(90);
                     }
-                    KeyCode::Char('j') | KeyCode::Down => app_state.scroll_down(1),
-                    KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
-                    KeyCode::PageDown => app_state.scroll_down(PAGE_AMOUNT),
-                    KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
-                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app_state.scroll_down(PAGE_AMOUNT);
-                    }
-                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app_state.scroll_up(PAGE_AMOUNT);
-                    }
+                                        KeyCode::Char('j') | KeyCode::Down => {
+                                            let pane_height = match app_state.active_pane {
+                                                ActivePane::Source => terminal.size().unwrap_or_default().height,
+                                                ActivePane::Assembly => terminal.size().unwrap_or_default().height,
+                                            };
+                                            app_state.scroll_down(1, pane_height);
+                                        }
+                                        KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
+                                        KeyCode::PageDown => {
+                                            let pane_height = match app_state.active_pane {
+                                                ActivePane::Source => terminal.size().unwrap_or_default().height,
+                                                ActivePane::Assembly => terminal.size().unwrap_or_default().height,
+                                            };
+                                            app_state.scroll_down(PAGE_AMOUNT, pane_height);
+                                        }
+                                        KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
+                                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                            let pane_height = match app_state.active_pane {
+                                                ActivePane::Source => terminal.size().unwrap_or_default().height,
+                                                ActivePane::Assembly => terminal.size().unwrap_or_default().height,
+                                            };
+                                            app_state.scroll_down(PAGE_AMOUNT, pane_height);
+                                        }
+                                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                            app_state.scroll_up(PAGE_AMOUNT);
+                                        }
+
                     _ => {}
                 }
             }
