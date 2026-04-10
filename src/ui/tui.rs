@@ -1,3 +1,5 @@
+//! Terminal User Interface for displaying source and assembly side-by-side.
+
 use crate::cli::Cli;
 use crate::commands::annotate::{AnnotationData, load_annotation_data};
 use color_eyre::eyre::{Result, eyre};
@@ -24,6 +26,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 use tui_logger::{TuiLoggerWidget, TuiWidgetState};
 
+// Maps a `colored::Color` to a `ratatui::style::Color`.
 fn map_color(c: ColoredColor) -> Color {
     match c {
         ColoredColor::Black => Color::Black,
@@ -46,12 +49,14 @@ fn map_color(c: ColoredColor) -> Color {
     }
 }
 
+/// Represents which pane is currently active and responding to scroll events.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum ActivePane {
     Source,
     Assembly,
 }
 
+/// Holds the main state of the TUI application.
 struct AppState {
     cli_args: Cli,
     func_name: String,
@@ -69,7 +74,7 @@ struct AppState {
     inter_context: usize,
 }
 
-// Helper to parse context string
+// Helper to parse context string "N" or "N:M"
 fn parse_context(context_str: &str) -> Result<(usize, usize)> {
     if let Ok(n) = context_str.parse::<usize>() {
         Ok((n, n))
@@ -83,6 +88,7 @@ fn parse_context(context_str: &str) -> Result<(usize, usize)> {
 }
 
 impl AppState {
+    /// Creates a new `AppState` from CLI arguments and initial annotation data.
     fn new(cli_args: &Cli, func_name: &str, data: AnnotationData) -> Result<Self> {
         let (pre_post_context, inter_context) = parse_context(&cli_args.context)?;
         let mut state = AppState {
@@ -105,6 +111,7 @@ impl AppState {
         Ok(state)
     }
 
+    /// Updates the display data (source and assembly lines) based on new AnnotationData.
     fn update_data(&mut self, data: AnnotationData) {
         self.display_name = data.display_name;
         let source_reader = &data.source_reader;
@@ -242,6 +249,7 @@ impl AppState {
         self.asm_lines = asm_lines;
     }
 
+    // Scrolls the active pane down by the given amount.
     fn scroll_down(&mut self, amount: u16, _pane_height: u16) {
         let min_visible_lines: u16 = 5;
         match self.active_pane {
@@ -266,6 +274,7 @@ impl AppState {
         }
     }
 
+    // Scrolls the active pane up by the given amount.
     fn scroll_up(&mut self, amount: u16) {
         match self.active_pane {
             ActivePane::Source => {
@@ -278,6 +287,18 @@ impl AppState {
     }
 }
 
+/// Sets up the terminal and runs the TUI application loop.
+///
+/// This function initializes the terminal, creates the application state, and handles
+/// the main event loop. It also ensures the terminal is restored to its original
+/// state upon exit.
+///
+/// # Arguments
+///
+/// * `cli_args` - The parsed command line arguments.
+/// * `func_name` - The name of the function being annotated.
+/// * `initial_data` - The initial data for assembly and source annotations.
+/// * `file_change_rx` - A receiver for file change notifications, triggering data reload.
 pub fn run_tui(
     cli_args: &Cli,
     func_name: &str,
@@ -311,6 +332,7 @@ pub fn run_tui(
 const PAGE_AMOUNT: u16 = 15;
 const LOGGER_HEIGHT: u16 = 10;
 
+// Main application loop: handles events and draws the UI.
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app_state: AppState,
@@ -441,6 +463,7 @@ fn run_app<B: Backend>(
     }
 }
 
+// Renders the title bar.
 fn ui_title(f: &mut Frame, app_state: &AppState, area: Rect) {
     let title_line = Line::from(vec![
         Span::raw("Annotating Function: "),
@@ -456,6 +479,7 @@ fn ui_title(f: &mut Frame, app_state: &AppState, area: Rect) {
     f.render_widget(title_paragraph, area);
 }
 
+// Renders the source code pane.
 fn ui_source_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
     let border_style =
         if app_state.active_pane == ActivePane::Source && !app_state.show_help {
@@ -474,6 +498,7 @@ fn ui_source_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
     f.render_widget(pane, area);
 }
 
+// Renders the assembly code pane.
 fn ui_asm_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
     let border_style =
         if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
@@ -492,6 +517,7 @@ fn ui_asm_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
     f.render_widget(pane, area);
 }
 
+// Renders the logger pane if visible.
 fn ui_logger(f: &mut Frame, app_state: &AppState, area: Rect) {
     let logger_widget = TuiLoggerWidget::default()
         .block(
@@ -503,6 +529,7 @@ fn ui_logger(f: &mut Frame, app_state: &AppState, area: Rect) {
     f.render_widget(logger_widget, area);
 }
 
+// Renders the help popup if visible.
 fn ui_help(f: &mut Frame, size: Rect) {
     let help_text = Text::from(vec![
         Line::from(Span::styled(
