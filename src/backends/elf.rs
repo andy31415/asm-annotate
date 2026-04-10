@@ -78,6 +78,8 @@ pub trait ElfBackend {
     // Build a mapping for:
     //    - address -> (source file: line-number)
     fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, SourceLocation>>;
+
+    fn get_symbol_at(&self, elf_path: &Path, addr: u64) -> Result<Option<String>>;
 }
 
 pub struct GoblinElfBackend;
@@ -235,5 +237,54 @@ impl ElfBackend for GoblinElfBackend {
         }
 
         Ok(mapping)
+    }
+
+    fn get_symbol_at(&self, elf_path: &Path, addr: u64) -> Result<Option<String>> {
+        let buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
+        let elf = elf::Elf::parse(&buffer).wrap_err("Failed to parse ELF file")?;
+
+        let addr = addr & !1; // Clear Thumb bit
+
+        // First, check for an exact function match at the address
+        for sym in elf.syms.iter().chain(elf.dynsyms.iter()) {
+            if sym.st_type() == elf::sym::STT_FUNC {
+                let sym_addr = sym.st_value & !1;
+                if sym_addr == addr {
+                    let name = elf.strtab.get_at(sym.st_name).or_else(|| elf.dynstrtab.get_at(sym.st_name));
+                    if let Some(name) = name {
+                        return Ok(Some(name.to_string()));
+                    }
+                }
+            }
+        }
+
+        // Fallback: find the smallest symbol containing the address
+        let mut best_match: Option<(String, u64)> = None;
+        for sym in elf.syms.iter().chain(elf.dynsyms.iter()) {
+            let sym_addr = sym.st_value & !1;
+            // Only consider symbols that start at or before the address
+            if sym_addr <= addr {
+                let sym_size = sym.st_size;
+                if addr < sym_addr + sym_size {
+                    let name = elf.strtab.get_at(sym.st_name).or_else(|| elf.dynstrtab.get_at(sym.st_name));
+                    if let Some(name) = name {
+                        match best_match {
+                            Some((_, best_size)) => {
+                                if sym_size > 0 && sym_size < best_size {
+                                    best_match = Some((name.to_string(), sym_size));
+                                }
+                            }
+                            None => {
+                                if sym_size > 0 {
+                                    best_match = Some((name.to_string(), sym_size));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(best_match.map(|(name, _)| name))
     }
 }

@@ -1,3 +1,4 @@
+use crate::backends::elf::{ElfBackend, GoblinElfBackend};
 use color_eyre::eyre::Result;
 use std::collections::HashMap;
 use std::{fs, path::Path};
@@ -5,6 +6,8 @@ use std::{fs, path::Path};
 use capstone::{Capstone, Insn, arch::BuildsCapstone};
 use goblin::elf::Elf as ElfFile;
 use goblin::elf::sym;
+use lazy_static::lazy_static;
+use regex::Regex;
 
 #[derive(Debug, Clone)]
 pub struct Instruction {
@@ -13,13 +16,18 @@ pub struct Instruction {
     pub mnemonic: String,
 }
 
+lazy_static! {
+    static ref HEX_ADDR_RE: Regex = Regex::new(r"#?(0x[0-9a-fA-F]+)").unwrap();
+}
+
 pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<Instruction>> {
     let buffer = fs::read(elf_path)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to read ELF file: {:#?}", e))?;
     let elf_obj = ElfFile::parse(&buffer)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to parse ELF file: {:#?}", e))?;
 
-    let cs = match elf_obj.header.e_machine {
+    let arch = elf_obj.header.e_machine;
+    let cs = match arch {
         goblin::elf::header::EM_X86_64 => Capstone::new().x86().detail(true).build(),
         goblin::elf::header::EM_ARM => {
             // Determine ARM vs Thumb mode by checking the LSB of the function's start address.
@@ -64,7 +72,9 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
     let mut section_addr = 0;
 
     for section in &elf_obj.section_headers {
-        if section.sh_type != goblin::elf::section_header::SHT_PROGBITS {
+        if section.sh_type != goblin::elf::section_header::SHT_PROGBITS
+            || (section.sh_flags & goblin::elf::section_header::SHF_EXECINSTR as u64) == 0
+        {
             continue;
         }
 
@@ -89,7 +99,7 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
 
     let data = section_data.ok_or_else(|| {
         color_eyre::eyre::eyre!(
-            "No PROGBITS section found fully containing the range {:#x}-{:#x}",
+            "No executable section found fully containing the range {:#x}-{:#x}",
             start,
             end
         )
@@ -123,6 +133,8 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
         .disasm_all(code, start)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to disassemble: {}", e))?;
 
+    let elf_backend = GoblinElfBackend;
+
     let instructions: Vec<Instruction> = insns
         .iter()
         .map(|insn: &Insn| {
@@ -132,16 +144,28 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
                 .map(|b| format!("{:02x}", b))
                 .collect::<Vec<String>>()
                 .join(" ");
+
+            let mnemonic = insn.mnemonic().unwrap_or("");
+            let op_str = insn.op_str().unwrap_or("");
+
+            let mut full_mnemonic = format!("{} {}", mnemonic, op_str).trim().to_string();
+
+            if mnemonic.starts_with('b') || mnemonic == "call" || mnemonic == "jmp" {
+                if let Some(caps) = HEX_ADDR_RE.captures(op_str) {
+                    if let Some(addr_str) = caps.get(1) {
+                        if let Ok(target_addr) = u64::from_str_radix(&addr_str.as_str()[2..], 16) {
+                            if let Ok(Some(symbol)) = elf_backend.get_symbol_at(elf_path, target_addr) {
+                                full_mnemonic.push_str(&format!("  ; <{}>", symbol));
+                            }
+                        }
+                    }
+                }
+            }
+
             Instruction {
                 address: insn.address(),
                 bytes: bytes_str,
-                mnemonic: format!(
-                    "{} {}",
-                    insn.mnemonic().unwrap_or(""),
-                    insn.op_str().unwrap_or("")
-                )
-                .trim()
-                .to_string(),
+                mnemonic: full_mnemonic,
             }
         })
         .collect();

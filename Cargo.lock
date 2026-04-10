@@ -133,6 +133,7 @@ dependencies = [
  "gimli 0.28.1",
  "goblin",
  "indexmap 2.13.1",
+ "lazy_static",
  "log",
  "ratatui",
  "regex",
