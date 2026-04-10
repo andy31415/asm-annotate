@@ -106,7 +106,6 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     // 3. Disassemble range
     let mut instructions = crate::backends::disasm::disassemble_range(
         &args.elf,
-        args.objdump.as_deref(),
         start_addr,
         end_addr,
     )

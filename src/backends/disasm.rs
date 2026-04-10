@@ -12,12 +12,7 @@ pub struct Instruction {
     pub mnemonic: String,
 }
 
-pub fn disassemble_range(
-    elf_path: &Path,
-    _user_objdump: Option<&str>, // No longer used
-    start: u64,
-    end: u64,
-) -> Result<Vec<Instruction>> {
+pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<Instruction>> {
     let buffer = fs::read(elf_path)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to read ELF file: {:#?}", e))?;
     let elf_obj = ElfFile::parse(&buffer)
@@ -25,8 +20,16 @@ pub fn disassemble_range(
 
     let cs = match elf_obj.header.e_machine {
         goblin::elf::header::EM_X86_64 => Capstone::new().x86().detail(true).build(),
-        goblin::elf::header::EM_ARM => Capstone::new().arm().detail(true).build(),
-        goblin::elf::header::EM_AARCH64 => Capstone::new().arm64().detail(true).build(),
+        goblin::elf::header::EM_ARM => Capstone::new()
+            .arm()
+            .mode(capstone::arch::arm::ArchMode::Thumb)
+            .detail(true)
+            .build(),
+        goblin::elf::header::EM_AARCH64 => Capstone::new()
+            .arm64()
+            .mode(capstone::arch::arm64::ArchMode::Arm)
+            .detail(true)
+            .build(),
         _ => Err(capstone::Error::CustomError("Unsupported architecture")),
     }
     .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize Capstone: {}", e))?;
