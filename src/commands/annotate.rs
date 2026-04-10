@@ -1,7 +1,7 @@
 use crate::backends::demangle::{CppDemangleBackend, DemanglerBackend};
 use crate::backends::elf::{ElfBackend, FunctionInfo, GoblinElfBackend};
 use crate::backends::picker::{PickerBackend, SkimBackend};
-use crate::cli::AnnotateArgs;
+use crate::cli::Cli;
 use crate::source_reader::SourceReader;
 use crate::types::{AnnotatedInstruction, DisplayItem};
 use crate::ui::tui::run_tui;
@@ -9,7 +9,7 @@ use crate::ui::tui::run_tui;
 use color_eyre::eyre::{Context, Result, eyre};
 use log::{info, warn};
 
-pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
+pub fn handle_annotate(args: &Cli) -> Result<()> {
     let elf_backend = GoblinElfBackend;
     let demangler_backend = CppDemangleBackend;
     let source_reader = SourceReader::new(&args.remap)?;
@@ -22,30 +22,31 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
         return Err(eyre!("No functions found in ELF file."));
     }
 
-    let function_name = match &args.function {
-        Some(name) => name,
-        None => {
-            return Err(eyre!(
-                "Function name not provided. Use --list to see available functions."
-            ));
-        }
-    };
+    let function_name: &str = args.function.as_deref().unwrap_or("");
 
-    let mut matched_functions: Vec<FunctionInfo> = functions
-        .into_iter()
-        .filter(|f| f.name.contains(function_name))
-        .collect();
+    let mut matched_functions: Vec<FunctionInfo> = if function_name.is_empty() {
+        functions
+    } else {
+        functions
+            .into_iter()
+            .filter(|f| f.name.contains(function_name))
+            .collect()
+    };
 
     let selected_function: FunctionInfo = match matched_functions.len() {
         0 => {
             return Err(eyre!("No function found matching '{}'.", function_name));
         }
-        1 => matched_functions.pop().unwrap(),
-        _ => {
-            info!(
-                "Multiple functions match '{}'. Please choose one:",
-                function_name
-            );
+        1 if !function_name.is_empty() => matched_functions.pop().unwrap(),
+        _ => { // Includes function_name.is_empty() case
+            if function_name.is_empty() {
+                info!("Please choose a function to annotate:");
+            } else {
+                info!(
+                    "Multiple functions match '{}'. Please choose one:",
+                    function_name
+                );
+            }
             let picker_backend = SkimBackend;
             picker_backend
                 .pick_function(matched_functions, &demangler_backend)?

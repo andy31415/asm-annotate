@@ -17,19 +17,8 @@ fn main() -> Result<()> {
         .init();
     color_eyre::install()?;
 
-    match &cli.command {
-        Some(cli::Commands::List(args)) => {
-            commands::list::handle_list(args)?;
-        }
-        Some(cli::Commands::Annotate(args)) => {
-            commands::annotate::handle_annotate(args)?;
-        }
-        None => {
-            // Default behavior if no subcommand is given
-            // Maybe print help or a default annotation
-            println!("No command given. Use --help to see options.");
-        }
-    }
+    // Directly use the arguments for annotate
+    commands::annotate::handle_annotate(&cli)?;
 
     Ok(())
 }
