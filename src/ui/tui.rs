@@ -168,7 +168,7 @@ impl AppState {
                                 line_num_str,
                                 Style::default().add_modifier(Modifier::DIM),
                             ),
-                            Span::raw("    "),
+                            Span::raw("  "),
                             Span::styled(line_content, Style::default().fg(Color::DarkGray)),
                         ])
                     };
