@@ -1,5 +1,4 @@
 use crate::backends::disasm::Instruction;
-use crate::source_reader::SourceReader;
 use colored::*;
 use std::collections::HashMap;
 
@@ -49,22 +48,16 @@ impl AnnotatedInstruction {
 pub struct DisplayItem {
     pub instruction: Instruction,
     pub source: Option<SourceLocation>,
-    pub source_text: Option<String>, // Single line of source text
     pub color: Color,
-    pub is_new_file: bool,
-    pub is_new_line: bool,
 }
 
 impl DisplayItem {
     pub fn from_annotated(
         annotated_instructions: &[AnnotatedInstruction],
-        source_reader: &SourceReader,
     ) -> color_eyre::Result<Vec<DisplayItem>> {
         let mut display_items = Vec::new();
         let mut color_map: HashMap<SourceLocation, Color> = HashMap::new();
         let mut color_idx = 0;
-        let mut prev_source: Option<SourceLocation> = None;
-        let mut prev_file: Option<String> = None;
 
         for ai in annotated_instructions {
             let mut color = Color::White;
@@ -76,30 +69,11 @@ impl DisplayItem {
                 });
             }
 
-            let source_text = if let Some(ref src) = ai.source {
-                source_reader.read_line(&src.file, src.line)?
-            } else {
-                None
-            };
-
-            let is_new_file = match &ai.source {
-                Some(src) => prev_file.as_ref() != Some(&src.file),
-                None => prev_file.is_some(), // New block if we just came from a file
-            };
-
-            let is_new_line = ai.source != prev_source;
-
             display_items.push(DisplayItem {
                 instruction: ai.instruction.clone(),
                 source: ai.source.clone(),
-                source_text,
                 color,
-                is_new_file,
-                is_new_line,
             });
-
-            prev_file = ai.source.as_ref().map(|s| s.file.clone());
-            prev_source = ai.source.clone();
         }
 
         Ok(display_items)

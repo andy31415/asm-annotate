@@ -131,7 +131,7 @@ pub fn handle_annotate(args: &AnnotateArgs) -> Result<()> {
     let annotated_instructions = AnnotatedInstruction::from_many(&instructions, &addr_to_src);
 
     // 6. Prepare for Display
-    let display_items = DisplayItem::from_annotated(&annotated_instructions, &source_reader)?;
+    let display_items = DisplayItem::from_annotated(&annotated_instructions)?;
 
     // 7. Render output
     run_tui(&final_func_name, &display_items, &source_reader)?;
