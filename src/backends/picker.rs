@@ -1,3 +1,5 @@
+//! Backend for interactively picking items from a list.
+
 use crate::backends::demangle::DemanglerBackend;
 use crate::backends::elf::FunctionInfo;
 use color_eyre::eyre::{Result, eyre};
@@ -5,7 +7,18 @@ use skim::prelude::*;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+/// Trait for interactively picking a function from a list.
 pub trait PickerBackend {
+    /// Presents a list of functions to the user for selection.
+    ///
+    /// # Arguments
+    ///
+    /// * `functions` - A vector of `FunctionInfo` structs to choose from.
+    /// * `demangler` - A `DemanglerBackend` to provide demangled names for display.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an Option with the selected `FunctionInfo`, or None if no selection was made.
     fn pick_function(
         &self,
         functions: Vec<FunctionInfo>,
@@ -13,6 +26,7 @@ pub trait PickerBackend {
     ) -> Result<Option<FunctionInfo>>;
 }
 
+/// A `PickerBackend` implementation using the `skim` fuzzy finder.
 pub struct SkimBackend;
 
 struct SkimItemWrapper {

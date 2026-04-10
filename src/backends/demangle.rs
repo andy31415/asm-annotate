@@ -1,11 +1,37 @@
 use color_eyre::eyre::Result;
 use std::collections::HashMap;
 
+/// Trait for demangling symbol names.
+///
+/// This provides an abstraction over different demangling libraries.
 pub trait DemanglerBackend {
+    /// Demangles a single symbol name.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The mangled symbol name.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the demangled name or an error if demangling fails.
     fn demangle(&self, name: &str) -> Result<String>;
+
+    /// Demangles a batch of symbol names.
+    ///
+    /// Failed demangle operations are silently skipped.
+    ///
+    /// # Arguments
+    ///
+    /// * `names` - A slice of mangled symbol names.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a HashMap where keys are the original mangled names
+    /// and values are the demangled names.
     fn demangle_batch(&self, names: &[String]) -> Result<HashMap<String, String>>;
 }
 
+/// A `DemanglerBackend` implementation using the `cpp_demangle` crate.
 pub struct CppDemangleBackend;
 
 impl DemanglerBackend for CppDemangleBackend {

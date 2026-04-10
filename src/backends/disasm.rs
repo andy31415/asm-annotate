@@ -1,3 +1,5 @@
+//! Disassembly backend using Capstone.
+
 use crate::backends::elf::{ElfBackend, GoblinElfBackend};
 use color_eyre::eyre::Result;
 use std::{fs, path::Path};
@@ -9,10 +11,14 @@ use goblin::elf::sym;
 use lazy_static::lazy_static;
 use regex::Regex;
 
+/// Represents a single disassembled instruction.
 #[derive(Debug, Clone)]
 pub struct Instruction {
+    /// The memory address of the instruction.
     pub address: u64,
+    /// A string representation of the instruction's bytes.
     pub bytes: String,
+    /// The mnemonic and operands of the instruction.
     pub mnemonic: String,
 }
 
@@ -207,6 +213,21 @@ fn perform_disassembly(
         .collect())
 }
 
+/// Disassembles a range of addresses within an ELF file.
+///
+/// This function reads the ELF file, finds the appropriate section,
+/// initializes the Capstone disassembler for the detected architecture,
+/// and disassembles the code within the given range [start, end).
+///
+/// # Arguments
+///
+/// * `elf_path` - Path to the ELF file.
+/// * `start` - The starting memory address of the range to disassemble.
+/// * `end` - The ending memory address (exclusive) of the range to disassemble.
+///
+/// # Returns
+///
+/// A `Result` containing a vector of `Instruction` structs or an error.
 pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<Instruction>> {
     let loaded_elf = load_and_parse_elf(elf_path)?;
     let cs = initialize_capstone(&loaded_elf.elf_obj, start)?;
@@ -217,7 +238,12 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
     perform_disassembly(&cs, code, start, &loaded_elf.elf_obj, &elf_backend)
 }
 
-/// Applies demangled names to its instructions.
+/// Replaces mangled symbols in instruction mnemonics with their demangled versions.
+///
+/// # Arguments
+///
+/// * `instructions` - A mutable slice of `Instruction` structs to modify.
+/// * `demangled_map` - A HashMap where keys are mangled names and values are demangled names.
 pub fn apply_demangling(
     instructions: &mut [Instruction],
     demangled_map: &HashMap<String, String>,

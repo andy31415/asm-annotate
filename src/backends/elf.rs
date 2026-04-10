@@ -1,3 +1,5 @@
+//! ELF file parsing backend using Goblin and DWARF debug info parsing using Gimli.
+
 use crate::types::SourceLocation;
 use color_eyre::eyre::{Context, Result};
 use goblin::elf;
@@ -8,13 +10,18 @@ use std::path::{Path, PathBuf};
 use gimli::read::{Dwarf, EndianSlice};
 use gimli::{AttributeValue, LineProgramHeader, LineRow, RunTimeEndian, SectionId};
 
+/// Information about a function extracted from ELF symbols.
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
+    /// The name of the function (likely mangled).
     pub name: String,
+    /// The starting memory address of the function.
     pub addr: u64,
+    /// The size of the function in bytes.
     pub size: u64,
 }
 
+// Helper function to construct SourceLocation from DWARF line row information.
 fn source_location(
     base_dir: &Option<String>,
     header: &LineProgramHeader<EndianSlice<RunTimeEndian>>,
@@ -71,25 +78,73 @@ fn source_location(
     })
 }
 
+/// Trait for interacting with ELF files.
 pub trait ElfBackend {
+    /// Lists all functions found in the ELF file's symbol tables.
+    ///
+    /// # Arguments
+    ///
+    /// * `elf_path` - Path to the ELF file.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a vector of `FunctionInfo` structs.
     fn list_functions(&self, elf_path: &Path) -> Result<Vec<FunctionInfo>>;
+
+    /// Gets the start and end memory addresses for a function by name.
+    ///
+    /// # Arguments
+    ///
+    /// * `elf_path` - Path to the ELF file.
+    /// * `func_name` - The name of the function to find.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a tuple of (start_addr, end_addr), or an error if not found.
     fn get_function_bounds(&self, elf_path: &Path, func_name: &str) -> Result<(u64, u64)>;
 
-    // Build a mapping for:
-    //    - address -> (source file: line-number)
+    /// Builds a map from memory addresses to source file locations (file:line).
+    ///
+    /// This function uses DWARF debug information.
+    ///
+    /// # Arguments
+    ///
+    /// * `elf_path` - Path to the ELF file.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a HashMap where keys are addresses (u64) and
+    /// values are `SourceLocation` structs.
     fn build_addr_to_src(&self, elf_path: &Path) -> Result<HashMap<u64, SourceLocation>>;
 
+    /// Finds the name of the symbol at a given memory address.
+    ///
+    /// It attempts to find an exact match for a function start address first.
+    /// If not found, it falls back to the smallest symbol that contains the address.
+    ///
+    /// # Arguments
+    ///
+    /// * `elf` - The parsed ELF object.
+    /// * `addr` - The memory address.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an Option with the symbol name, or None if no symbol is found.
     fn get_symbol_at(&self, elf: &elf::Elf, addr: u64) -> Result<Option<String>>;
 }
 
+/// An `ElfBackend` implementation using the `goblin` crate.
 pub struct GoblinElfBackend;
 
+/// Helper struct to load DWARF information from an ELF file using `gimli`.
+/// It owns the file buffer to ensure lifetimes are valid.
 #[derive(Default)]
 pub struct DwarfLoader {
     buffer: Vec<u8>,
 }
 
 impl DwarfLoader {
+    /// Loads the DWARF debug information from the given ELF file.
     fn load(&mut self, elf_path: &Path) -> Result<Dwarf<EndianSlice<'_, RunTimeEndian>>> {
         self.buffer = fs::read(elf_path).wrap_err("Failed to read ELF file")?;
 
@@ -140,7 +195,7 @@ impl ElfBackend for GoblinElfBackend {
             }
         }
 
-        // In python, dynsyms are only added if not already present in syms.
+        // dynsyms are only added if not already present in syms.
         for sym in elf.dynsyms.iter() {
             if sym.st_type() == elf::sym::STT_FUNC
                 && sym.st_size > 0
