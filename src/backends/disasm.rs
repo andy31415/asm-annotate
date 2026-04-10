@@ -16,46 +16,69 @@ pub struct Instruction {
     pub mnemonic: String,
 }
 
+// Holds the ELF file buffer and the parsed ElfFile object
+// to ensure the ElfFile does not outlive the buffer it references.
+struct LoadedElf<'a> {
+    buffer: Vec<u8>,
+    elf_obj: ElfFile<'a>,
+}
+
+impl<'a> LoadedElf<'a> {
+    fn new(buffer: Vec<u8>) -> Result<LoadedElf<'a>> {
+        let elf_obj = ElfFile::parse(&buffer)
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to parse ELF file: {:#?}", e))?;
+        // This is unsafe because we are aliasing the lifetime of elf_obj to 'a,
+        // but we know that buffer will live as long as LoadedElf.
+        let elf_obj = unsafe { std::mem::transmute(elf_obj) };
+        Ok(LoadedElf { buffer, elf_obj })
+    }
+}
+
 lazy_static! {
     static ref HEX_ADDR_RE: Regex = Regex::new(r"#?(0x[0-9a-fA-F]+)").unwrap();
 }
 
-pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<Instruction>> {
+fn load_and_parse_elf(elf_path: &Path) -> Result<LoadedElf<'static>> {
     let buffer = fs::read(elf_path)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to read ELF file: {:#?}", e))?;
-    let elf_obj = ElfFile::parse(&buffer)
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to parse ELF file: {:#?}", e))?;
+    LoadedElf::new(buffer)
+}
 
+fn determine_arm_mode(elf_obj: &ElfFile, start: u64) -> capstone::arch::arm::ArchMode {
+    // Determine ARM vs Thumb mode by checking the LSB of the function's start address.
+    let mut is_thumb = false;
+    for sym in elf_obj.syms.iter() {
+        if sym.st_type() == sym::STT_FUNC && (sym.st_value & !1) == start {
+            if (sym.st_value & 1) == 1 {
+                is_thumb = true;
+            }
+            break;
+        }
+    }
+    if !is_thumb {
+        for sym in elf_obj.dynsyms.iter() {
+            if sym.st_type() == sym::STT_FUNC && (sym.st_value & !1) == start {
+                if (sym.st_value & 1) == 1 {
+                    is_thumb = true;
+                }
+                break;
+            }
+        }
+    }
+
+    if is_thumb {
+        capstone::arch::arm::ArchMode::Thumb
+    } else {
+        capstone::arch::arm::ArchMode::Arm
+    }
+}
+
+fn initialize_capstone(elf_obj: &ElfFile, start: u64) -> Result<Capstone> {
     let arch = elf_obj.header.e_machine;
-    let cs = match arch {
+    match arch {
         goblin::elf::header::EM_X86_64 => Capstone::new().x86().detail(true).build(),
         goblin::elf::header::EM_ARM => {
-            // Determine ARM vs Thumb mode by checking the LSB of the function's start address.
-            let mut is_thumb = false;
-            for sym in elf_obj.syms.iter() {
-                if sym.st_type() == sym::STT_FUNC && (sym.st_value & !1) == start {
-                    if (sym.st_value & 1) == 1 {
-                        is_thumb = true;
-                    }
-                    break;
-                }
-            }
-            if !is_thumb {
-                for sym in elf_obj.dynsyms.iter() {
-                    if sym.st_type() == sym::STT_FUNC && (sym.st_value & !1) == start {
-                        if (sym.st_value & 1) == 1 {
-                            is_thumb = true;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            let mode = if is_thumb {
-                capstone::arch::arm::ArchMode::Thumb
-            } else {
-                capstone::arch::arm::ArchMode::Arm
-            };
+            let mode = determine_arm_mode(elf_obj, start);
             Capstone::new().arm().mode(mode).detail(true).build()
         }
         goblin::elf::header::EM_AARCH64 => Capstone::new()
@@ -65,13 +88,15 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
             .build(),
         _ => Err(capstone::Error::CustomError("Unsupported architecture")),
     }
-    .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize Capstone: {}", e))?;
+    .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize Capstone: {}", e))
+}
 
-    // Find the section containing the range [start, end)
-    let mut section_data: Option<&[u8]> = None;
-    let mut section_addr = 0;
-
-    for section in &elf_obj.section_headers {
+fn find_containing_section<'a>(
+    loaded_elf: &'a LoadedElf,
+    start: u64,
+    end: u64,
+) -> Result<(&'a [u8], u64)> {
+    for section in &loaded_elf.elf_obj.section_headers {
         if section.sh_type != goblin::elf::section_header::SHT_PROGBITS
             || (section.sh_flags & goblin::elf::section_header::SHF_EXECINSTR as u64) == 0
         {
@@ -85,26 +110,28 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
         if sh_addr <= start && end <= section_end {
             let offset = section.sh_offset as usize;
             let size = section.sh_size as usize;
-            if offset + size > buffer.len() {
+            if offset + size > loaded_elf.buffer.len() {
                 return Err(color_eyre::eyre::eyre!(
                     "Section bounds exceed buffer size for section at offset {:#x}",
                     offset
                 ));
             }
-            section_data = Some(&buffer[offset..offset + size]);
-            section_addr = sh_addr;
-            break;
+            return Ok((&loaded_elf.buffer[offset..offset + size], sh_addr));
         }
     }
+    Err(color_eyre::eyre::eyre!(
+        "No executable section found fully containing the range {:#x}-{:#x}",
+        start,
+        end
+    ))
+}
 
-    let data = section_data.ok_or_else(|| {
-        color_eyre::eyre::eyre!(
-            "No executable section found fully containing the range {:#x}-{:#x}",
-            start,
-            end
-        )
-    })?;
-
+fn extract_code_range<'a>(
+    section_data: &'a [u8],
+    section_addr: u64,
+    start: u64,
+    end: u64,
+) -> Result<&'a [u8]> {
     if start < section_addr {
         return Err(color_eyre::eyre::eyre!(
             "Start address {:#x} is before section start {:#x}",
@@ -116,26 +143,52 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
     let offset_in_section = start - section_addr;
     let length = end - start;
 
-    if (offset_in_section + length) > data.len() as u64 {
+    if (offset_in_section + length) > section_data.len() as u64 {
         return Err(color_eyre::eyre::eyre!(
             "Disassembly range {:#x}-{:#x} (offset: {}, length: {}) exceeds section bounds (data size: {})",
             start,
             end,
             offset_in_section,
             length,
-            data.len()
+            section_data.len()
         ));
     }
 
-    let code = &data[offset_in_section as usize..(offset_in_section + length) as usize];
+    Ok(&section_data[offset_in_section as usize..(offset_in_section + length) as usize])
+}
 
+fn annotate_instruction(
+    insn: &Insn,
+    elf_obj: &ElfFile,
+    elf_backend: &impl ElfBackend,
+) -> String {
+    let mnemonic = insn.mnemonic().unwrap_or("");
+    let op_str = insn.op_str().unwrap_or("");
+    let mut full_mnemonic = format!("{} {}", mnemonic, op_str).trim().to_string();
+
+    if (mnemonic.starts_with('b') || mnemonic == "call" || mnemonic == "jmp")
+        && let Some(caps) = HEX_ADDR_RE.captures(op_str)
+        && let Some(addr_str) = caps.get(1)
+        && let Ok(target_addr) = u64::from_str_radix(&addr_str.as_str()[2..], 16)
+        && let Ok(Some(symbol)) = elf_backend.get_symbol_at(elf_obj, target_addr)
+    {
+        full_mnemonic.push_str(&format!("  ; <{}>", symbol));
+    }
+    full_mnemonic
+}
+
+fn perform_disassembly(
+    cs: &Capstone,
+    code: &[u8],
+    start: u64,
+    elf_obj: &ElfFile,
+    elf_backend: &impl ElfBackend,
+) -> Result<Vec<Instruction>> {
     let insns = cs
         .disasm_all(code, start)
         .map_err(|e| color_eyre::eyre::eyre!("Failed to disassemble: {}", e))?;
 
-    let elf_backend = GoblinElfBackend;
-
-    let instructions: Vec<Instruction> = insns
+    Ok(insns
         .iter()
         .map(|insn: &Insn| {
             let bytes_str = insn
@@ -145,29 +198,23 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
                 .collect::<Vec<String>>()
                 .join(" ");
 
-            let mnemonic = insn.mnemonic().unwrap_or("");
-            let op_str = insn.op_str().unwrap_or("");
-
-            let mut full_mnemonic = format!("{} {}", mnemonic, op_str).trim().to_string();
-
-            if (mnemonic.starts_with('b') || mnemonic == "call" || mnemonic == "jmp")
-                && let Some(caps) = HEX_ADDR_RE.captures(op_str)
-                && let Some(addr_str) = caps.get(1)
-                && let Ok(target_addr) = u64::from_str_radix(&addr_str.as_str()[2..], 16)
-                && let Ok(Some(symbol)) = elf_backend.get_symbol_at(&elf_obj, target_addr)
-            {
-                full_mnemonic.push_str(&format!("  ; <{}>", symbol));
-            }
-
             Instruction {
                 address: insn.address(),
                 bytes: bytes_str,
-                mnemonic: full_mnemonic,
+                mnemonic: annotate_instruction(insn, elf_obj, elf_backend),
             }
         })
-        .collect();
+        .collect())
+}
 
-    Ok(instructions)
+pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<Instruction>> {
+    let loaded_elf = load_and_parse_elf(elf_path)?;
+    let cs = initialize_capstone(&loaded_elf.elf_obj, start)?;
+    let (section_data, section_addr) = find_containing_section(&loaded_elf, start, end)?;
+    let code = extract_code_range(section_data, section_addr, start, end)?;
+
+    let elf_backend = GoblinElfBackend;
+    perform_disassembly(&cs, code, start, &loaded_elf.elf_obj, &elf_backend)
 }
 
 /// Applies demangled names to its instructions.
