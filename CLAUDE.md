@@ -31,7 +31,8 @@ Single Rust binary with several layers:
 -   `picker.rs` — `SkimBackend`: Uses the *embedded* `skim` crate for interactive function selection.
 
 **`src/commands/`** — command handlers:
--   `annotate.rs` — `handle_annotate`: Sets up file watcher, loads initial data, and launches the TUI. Contains `load_annotation_data` for (re)loading, and `AnnotationData` struct.
+-   `annotate.rs` — `handle_annotate`: Loads initial data. If `--dump`, delegates to `dump.rs` and exits. Otherwise sets up file watcher and launches the TUI. Contains `load_annotation_data` for (re)loading, and `AnnotationData` struct.
+-   `dump.rs` — `dump_annotation`: Prints a compact plain-text annotated listing to stdout (format C: source comment on change only). No ANSI codes; suitable for LLM/automation use.
 
 **`src/ui/`** — TUI rendering:
 -   `tui.rs`: ratatui interface for side-by-side source and assembly viewing. Manages `AppState`, event loop, and drawing. Includes hot-reloading logic via a channel receiver.
@@ -52,6 +53,7 @@ Options:
   --context <N or N:M>    Set source context lines (default: 2:5)
   --no-demangle           skip C++ demangling
   --remap <OLD> <NEW>     remap source path prefix (repeatable)
+  --dump                  print plain-text annotated listing instead of launching TUI
 ```
 
 ## External tool dependencies

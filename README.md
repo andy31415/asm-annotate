@@ -9,6 +9,7 @@ Works with your existing ELF file. No changes to your build needed — just buil
 ## Features
 
 -   **Interactive TUI:** Side-by-side, colored view of source code and disassembly using `ratatui`.
+-   **Plain-text dump mode:** `--dump` outputs a compact, color-free annotated listing suitable for LLM/automation use.
 -   **Hot Reloading:** Automatically refreshes the TUI when the target ELF file is modified (e.g., after recompilation).
 -   **Self-Contained:** No external dependencies like `objdump` or `sk`.
 -   **DWARF Debug Info:** Uses DWARF data to map assembly back to source lines.
@@ -57,6 +58,25 @@ asm-annotate firmware.elf my_function --context 3
 
 # Remap source paths if the build tree moved
 asm-annotate firmware.elf my_function --remap /build/path /local/path
+
+# Dump plain-text annotation (no TUI) — pipe to a file or an LLM
+asm-annotate firmware.elf my_function --dump
+```
+
+### Dump output format
+
+`--dump` prints a compact annotated listing with no ANSI color codes. The source
+location comment is only emitted when the source line changes, keeping token
+count low for LLM context windows:
+
+```
+; function: MyClass::compute(int) [foo.cpp]
+1200  push {r4, lr}
+1202  cmp r0, #0             ; foo.cpp:38: if (n <= 0)
+1204  ble .+14
+1206  add r4, r0, r1         ; foo.cpp:39:   return n + offset;
+1208  mov r0, r4
+120a  pop {pc}
 ```
 
 ### Key TUI Controls
