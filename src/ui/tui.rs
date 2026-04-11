@@ -2,6 +2,8 @@
 
 use crate::cli::Cli;
 use crate::commands::annotate::{AnnotationData, load_annotation_data};
+use crate::types::SourceItem;
+use crate::ui::source_view::build_source_view;
 use color_eyre::eyre::{Result, eyre};
 use colored::Color as ColoredColor;
 use crossterm::{
@@ -18,7 +20,6 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
@@ -59,10 +60,7 @@ enum ActivePane {
 struct AppState {
     cli_args: Cli,
     func_name: String,
-    /// Source content lines (file headers excluded — see `source_file_headers`).
-    source_lines: Vec<Line<'static>>,
-    /// File header insertion points: (index into source_lines where header goes, raw path).
-    source_file_headers: Vec<(usize, String)>,
+    source_items: Vec<SourceItem>,
     asm_lines: Vec<Line<'static>>,
     active_pane: ActivePane,
     source_scroll: u16,
@@ -103,8 +101,7 @@ impl AppState {
         let mut state = AppState {
             cli_args: cli_args.clone(),
             func_name: func_name.to_string(),
-            source_lines: Vec::new(),
-            source_file_headers: Vec::new(),
+            source_items: Vec::new(),
             asm_lines: Vec::new(),
             active_pane: ActivePane::Source,
             source_scroll: 0,
@@ -124,7 +121,6 @@ impl AppState {
     /// Updates the display data (source and assembly lines) based on new AnnotationData.
     fn update_data(&mut self, data: AnnotationData) {
         self.display_name = data.display_name;
-        self.source_file_headers.clear();
         let source_reader = &data.source_reader;
         let items = &data.display_items;
 
@@ -153,113 +149,12 @@ impl AppState {
             })
             .collect();
 
-        // --- Prepare Source Lines ---
-        let mut source_map: BTreeMap<String, BTreeMap<usize, ()>> = BTreeMap::new();
-        let mut file_line_color: HashMap<(String, usize), Color> = HashMap::new();
-
-        for item in items {
-            if let Some(ref src) = item.source {
-                source_map
-                    .entry(src.file.clone())
-                    .or_default()
-                    .insert(src.line, ());
-                file_line_color
-                    .entry((src.file.clone(), src.line))
-                    .or_insert(map_color(item.color));
-            }
-        }
-
-        let mut source_file_headers: Vec<(usize, String)> = Vec::new();
-        let mut source_lines: Vec<Line<'static>> = Vec::new();
-        for (file, lines) in &source_map {
-            source_file_headers.push((source_lines.len(), file.clone()));
-
-            if lines.is_empty() {
-                continue;
-            }
-
-            let mut sorted_asm_lines: Vec<usize> = lines.keys().cloned().collect();
-            sorted_asm_lines.sort();
-
-            let mut ranges: Vec<(usize, usize)> = Vec::new();
-            let mut i = 0;
-            while i < sorted_asm_lines.len() {
-                let current_asm_line = sorted_asm_lines[i];
-                let context = if i == 0 {
-                    self.pre_post_context
-                } else {
-                    self.inter_context
-                };
-                let start = std::cmp::max(1, current_asm_line.saturating_sub(context));
-                let mut end = current_asm_line + context;
-                let mut j = i + 1;
-                while j < sorted_asm_lines.len() {
-                    let next_asm_line = sorted_asm_lines[j];
-                    let next_context = self.inter_context;
-                    if std::cmp::max(1, next_asm_line.saturating_sub(next_context)) <= end + 1 {
-                        end = next_asm_line + next_context;
-                        j += 1;
-                    } else {
-                        break;
-                    }
-                }
-                ranges.push((start, end));
-                i = j;
-            }
-
-            // Adjust the end context for the last range
-            if let Some(last_range) = ranges.last_mut() {
-                let last_asm_line = *sorted_asm_lines.last().unwrap();
-                last_range.1 = last_asm_line + self.pre_post_context;
-            }
-
-            let mut last_printed_line: Option<usize> = None;
-            for (start, end) in ranges {
-                if let Some(last) = last_printed_line
-                    && start > last + 1
-                {
-                    let line_num_str = format!("{:>4}:", "");
-                    source_lines.push(Line::from(Span::styled(
-                        format!("{} ~", line_num_str),
-                        Style::default().add_modifier(Modifier::DIM),
-                    )));
-                }
-
-                for l in start..=end {
-                    let color = file_line_color.get(&(file.clone(), l));
-                    let line_content = source_reader
-                        .read_line(file, l)
-                        .unwrap_or(None)
-                        .unwrap_or_default();
-                    let is_main = lines.contains_key(&l);
-
-                    let line_num_str = format!("{:>4}: ", l);
-                    let base_style = color.map_or(Style::default(), |c| Style::default().fg(*c));
-
-                    let styled_content = if is_main {
-                        Line::from(vec![
-                            Span::styled(line_num_str, base_style.add_modifier(Modifier::BOLD)),
-                            Span::styled("▶ ", base_style.add_modifier(Modifier::BOLD)),
-                            Span::styled(line_content, base_style),
-                        ])
-                    } else {
-                        Line::from(vec![
-                            Span::styled(
-                                line_num_str,
-                                Style::default().add_modifier(Modifier::DIM),
-                            ),
-                            Span::raw("  "),
-                            Span::styled(line_content, Style::default().fg(Color::DarkGray)),
-                        ])
-                    };
-                    source_lines.push(styled_content);
-                }
-                last_printed_line = Some(end);
-            }
-        }
-
-        self.source_lines = source_lines;
-        self.source_file_headers = source_file_headers;
+        self.source_items = build_source_view(
+            items,
+            source_reader,
+            self.pre_post_context,
+            self.inter_context,
+        );
         self.asm_lines = asm_lines;
     }
 
@@ -268,7 +163,7 @@ impl AppState {
         let min_visible_lines: u16 = 5;
         match self.active_pane {
             ActivePane::Source => {
-                let content_height = self.source_lines.len() as u16;
+                let content_height = self.source_items.len() as u16;
                 if content_height > min_visible_lines {
                     let max_scroll = content_height.saturating_sub(min_visible_lines);
                     self.source_scroll = self.source_scroll.saturating_add(amount).min(max_scroll);
@@ -501,27 +396,48 @@ fn ui_source_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
         Style::default()
     };
 
-    // Build display lines with file headers sized to the available pane width.
     // Borders consume 2 columns; "-- " + " --" consume 6 more.
     let path_budget = area.width.saturating_sub(8) as usize;
-    let header_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
-    let mut display_lines: Vec<Line<'static>> =
-        Vec::with_capacity(app_state.source_lines.len() + app_state.source_file_headers.len());
-    let mut content_idx = 0usize;
-    for (insert_at, raw_path) in &app_state.source_file_headers {
-        while content_idx < *insert_at {
-            display_lines.push(app_state.source_lines[content_idx].clone());
-            content_idx += 1;
-        }
-        display_lines.push(Line::from(Span::styled(
-            format!("-- {} --", short_path_by_width(raw_path, path_budget)),
-            header_style,
-        )));
-    }
-    while content_idx < app_state.source_lines.len() {
-        display_lines.push(app_state.source_lines[content_idx].clone());
-        content_idx += 1;
-    }
+
+    let display_lines: Vec<Line<'static>> = app_state
+        .source_items
+        .iter()
+        .map(|item| match item {
+            SourceItem::FileHeader { path } => Line::from(Span::styled(
+                format!("-- {} --", short_path_by_width(path, path_budget)),
+                Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC),
+            )),
+            SourceItem::Gap => Line::from(Span::styled(
+                format!("{:>4}  ~", ""),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+            SourceItem::Line {
+                number,
+                text,
+                color,
+                is_main,
+            } => {
+                let ratatui_color = color.map(map_color);
+                let num_str = format!("{:>4}: ", number);
+                if *is_main {
+                    let style = ratatui_color
+                        .map(|c| Style::default().fg(c))
+                        .unwrap_or_default();
+                    Line::from(vec![
+                        Span::styled(num_str, style.add_modifier(Modifier::BOLD)),
+                        Span::styled("▶ ", style.add_modifier(Modifier::BOLD)),
+                        Span::styled(text.clone(), style),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::styled(num_str, Style::default().add_modifier(Modifier::DIM)),
+                        Span::raw("  "),
+                        Span::styled(text.clone(), Style::default().fg(Color::DarkGray)),
+                    ])
+                }
+            }
+        })
+        .collect();
 
     let pane = Paragraph::new(display_lines)
         .block(

@@ -58,6 +58,29 @@ impl AnnotatedInstruction {
     }
 }
 
+/// An item in the source code view panel.
+///
+/// A `Vec<SourceItem>` fully describes what to show in the source pane — the UI
+/// layer only needs to format and render each variant, not perform any grouping logic.
+#[derive(Debug, Clone)]
+pub enum SourceItem {
+    /// A header line separating source files (e.g. `-- path/to/file.cpp --`).
+    FileHeader { path: String },
+    /// A line of source code.
+    Line {
+        number: usize,
+        text: String,
+        /// Color from the assembly palette when this line maps to assembly instructions;
+        /// `None` for context-only lines that are shown for surrounding context.
+        color: Option<Color>,
+        /// `true` when this line is directly mapped to one or more assembly instructions
+        /// (as opposed to a context line shown nearby). Used to apply bold styling.
+        is_main: bool,
+    },
+    /// A gap marker (`~`) between non-consecutive line groups within a file.
+    Gap,
+}
+
 /// Represents an item to be displayed in the TUI, including color information.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayItem {
