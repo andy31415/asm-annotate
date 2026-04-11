@@ -49,7 +49,21 @@ pub fn handle_annotate(args: &Cli) -> Result<()> {
     } else {
         functions
             .into_iter()
-            .filter(|f| f.name.contains(function_name))
+            .filter(|f| {
+                if f.name.contains(function_name) {
+                    return true;
+                }
+                // Also match against the demangled name.
+                if !args.no_demangle {
+                    let demangled = demangler_backend
+                        .demangle(&f.name)
+                        .unwrap_or_else(|_| f.name.clone());
+                    if demangled.contains(function_name) {
+                        return true;
+                    }
+                }
+                false
+            })
             .collect()
     };
 
@@ -84,10 +98,17 @@ pub fn handle_annotate(args: &Cli) -> Result<()> {
         selected_function.name.clone()
     };
 
-    info!(
-        "Selected function: {} at {:#x}",
-        display_name, selected_function.addr
-    );
+    if display_name != selected_function.name {
+        info!(
+            "Selected function: {} [{}] at {:#x}",
+            display_name, selected_function.name, selected_function.addr
+        );
+    } else {
+        info!(
+            "Selected function: {} at {:#x}",
+            display_name, selected_function.addr
+        );
+    }
 
     // Initial data load
     let initial_data = load_annotation_data(args, &selected_function.name)?;
