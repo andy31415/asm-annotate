@@ -6,6 +6,8 @@ Works with your existing ELF file. No changes to your build needed — just buil
 
 ---
 
+![TUI screenshot](tui_example.png)
+
 ## Features
 
 -   **Interactive TUI:** Side-by-side, colored view of source code and disassembly using `ratatui`.
