@@ -1,7 +1,13 @@
 [package]
 name = "asm-annotate"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2024"
+description = "Source↔assembly annotation for ELF files, with an interactive TUI and plain-text dump mode"
+license = "Apache-2.0"
+repository = "https://github.com/andy31415/asm-annotate"
+readme = "README.md"
+keywords = ["assembly", "embedded", "dwarf", "disassembly", "elf"]
+categories = ["command-line-utilities", "development-tools::debugging"]
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
@@ -13,14 +19,12 @@ regex = "1.10.4"
 colored = "2.1.0"
 indexmap = "2.2.6"
 gimli = { version = "0.28.1", features = ["read"] }
-addr2line = "0.21.0"
 unicode-width = "0.2.2"
 terminal_size = "0.3"
 capstone = "0.12.0"
 ratatui = "0.27.0"
 crossterm = "0.27.0"
 skim = "0.10"
-lazy_static = "1.4.0"
 tui-logger = "0.11.0"
 notify = "6.1.1"
 

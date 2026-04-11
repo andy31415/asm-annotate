@@ -8,8 +8,8 @@ use std::{fs, path::Path};
 use capstone::{Capstone, Insn, arch::BuildsCapstone};
 use goblin::elf::Elf as ElfFile;
 use goblin::elf::sym;
-use lazy_static::lazy_static;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Represents a single disassembled instruction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,9 +41,7 @@ impl<'a> LoadedElf<'a> {
     }
 }
 
-lazy_static! {
-    static ref HEX_ADDR_RE: Regex = Regex::new(r"#?(0x[0-9a-fA-F]+)").unwrap();
-}
+static HEX_ADDR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#?(0x[0-9a-fA-F]+)").unwrap());
 
 fn load_and_parse_elf(elf_path: &Path) -> Result<LoadedElf<'static>> {
     let buffer = fs::read(elf_path)
