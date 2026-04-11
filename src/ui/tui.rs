@@ -59,7 +59,10 @@ enum ActivePane {
 struct AppState {
     cli_args: Cli,
     func_name: String,
+    /// Source content lines (file headers excluded — see `source_file_headers`).
     source_lines: Vec<Line<'static>>,
+    /// File header insertion points: (index into source_lines where header goes, raw path).
+    source_file_headers: Vec<(usize, String)>,
     asm_lines: Vec<Line<'static>>,
     active_pane: ActivePane,
     source_scroll: u16,
@@ -101,6 +104,7 @@ impl AppState {
             cli_args: cli_args.clone(),
             func_name: func_name.to_string(),
             source_lines: Vec::new(),
+            source_file_headers: Vec::new(),
             asm_lines: Vec::new(),
             active_pane: ActivePane::Source,
             source_scroll: 0,
@@ -120,6 +124,7 @@ impl AppState {
     /// Updates the display data (source and assembly lines) based on new AnnotationData.
     fn update_data(&mut self, data: AnnotationData) {
         self.display_name = data.display_name;
+        self.source_file_headers.clear();
         let source_reader = &data.source_reader;
         let items = &data.display_items;
 
@@ -164,12 +169,10 @@ impl AppState {
             }
         }
 
+        let mut source_file_headers: Vec<(usize, String)> = Vec::new();
         let mut source_lines: Vec<Line<'static>> = Vec::new();
         for (file, lines) in &source_map {
-            source_lines.push(Line::from(Span::styled(
-                format!("-- {} --", short_path(file, 3)),
-                Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC),
-            )));
+            source_file_headers.push((source_lines.len(), file.clone()));
 
             if lines.is_empty() {
                 continue;
@@ -256,6 +259,7 @@ impl AppState {
         }
 
         self.source_lines = source_lines;
+        self.source_file_headers = source_file_headers;
         self.asm_lines = asm_lines;
     }
 
@@ -496,7 +500,30 @@ fn ui_source_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
     } else {
         Style::default()
     };
-    let pane = Paragraph::new(app_state.source_lines.clone())
+
+    // Build display lines with file headers sized to the available pane width.
+    // Borders consume 2 columns; "-- " + " --" consume 6 more.
+    let path_budget = area.width.saturating_sub(8) as usize;
+    let header_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
+    let mut display_lines: Vec<Line<'static>> =
+        Vec::with_capacity(app_state.source_lines.len() + app_state.source_file_headers.len());
+    let mut content_idx = 0usize;
+    for (insert_at, raw_path) in &app_state.source_file_headers {
+        while content_idx < *insert_at {
+            display_lines.push(app_state.source_lines[content_idx].clone());
+            content_idx += 1;
+        }
+        display_lines.push(Line::from(Span::styled(
+            format!("-- {} --", short_path_by_width(raw_path, path_budget)),
+            header_style,
+        )));
+    }
+    while content_idx < app_state.source_lines.len() {
+        display_lines.push(app_state.source_lines[content_idx].clone());
+        content_idx += 1;
+    }
+
+    let pane = Paragraph::new(display_lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -592,19 +619,37 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-// Helper to shorten paths
-fn short_path(path_str: &str, depth: usize) -> String {
+// Shortens a path to fit within `max_chars` characters.
+// Keeps as many trailing components as will fit, prefixed with "…".
+// If even just the filename exceeds `max_chars`, truncates from the left with "…".
+fn short_path_by_width(path_str: &str, max_chars: usize) -> String {
+    if path_str.chars().count() <= max_chars {
+        return path_str.to_string();
+    }
     let path = Path::new(path_str);
     let components: Vec<&std::ffi::OsStr> = path.components().map(|c| c.as_os_str()).collect();
-    if components.len() > depth {
-        let start_index = components.len() - depth;
-        let mut result = PathBuf::from("…");
-        for component in components.iter().skip(start_index) {
-            result.push(component);
+    // Drop leading components one at a time (prefix with "…") until it fits.
+    // Iterating from start=1 gives the most components that still fit.
+    for start in 1..components.len() {
+        let mut candidate = PathBuf::from("…");
+        for component in components.iter().skip(start) {
+            candidate.push(component);
         }
-        result.to_string_lossy().to_string()
-    } else {
+        let s = candidate.to_string_lossy();
+        if s.chars().count() <= max_chars {
+            return s.into_owned();
+        }
+    }
+    // Nothing fits — hard-truncate from the left
+    let chars: Vec<char> = path_str.chars().collect();
+    if chars.len() <= max_chars {
         path_str.to_string()
+    } else {
+        let keep = max_chars.saturating_sub(1); // 1 for "…"
+        format!(
+            "…{}",
+            &chars[chars.len() - keep..].iter().collect::<String>()
+        )
     }
 }
 
@@ -613,14 +658,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_short_path_longer_than_depth() {
-        assert_eq!(short_path("/a/b/c/d.c", 3), "…/b/c/d.c");
+    fn test_short_path_by_width_fits() {
+        assert_eq!(short_path_by_width("/a/b.c", 20), "/a/b.c");
+        assert_eq!(short_path_by_width("short.c", 20), "short.c");
     }
 
     #[test]
-    fn test_short_path_shorter_than_depth() {
-        assert_eq!(short_path("/a/b.c", 3), "/a/b.c");
-        assert_eq!(short_path("short.c", 3), "short.c");
+    fn test_short_path_by_width_truncates() {
+        // "/a/b/c/d.c" is 10 chars; budget 8 → drop leading "/a" → "…/b/c/d.c" (9 chars still > 8)
+        // → drop "/a/b" → "…/c/d.c" (7 chars ≤ 8) ✓
+        assert_eq!(short_path_by_width("/a/b/c/d.c", 8), "…/c/d.c");
+        // Wider budget → can fit one extra component
+        assert_eq!(short_path_by_width("/a/b/c/d.c", 9), "…/b/c/d.c");
+        // Full path fits
+        assert_eq!(short_path_by_width("/a/b/c/d.c", 10), "/a/b/c/d.c");
+    }
+
+    #[test]
+    fn test_short_path_by_width_hard_truncate() {
+        // Even the filename alone exceeds budget
+        assert_eq!(short_path_by_width("/very/long/filename.c", 4), "…e.c");
     }
 
     #[test]
