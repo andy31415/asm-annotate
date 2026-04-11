@@ -407,68 +407,69 @@ fn run_app<B: Backend>(
 
         // Poll for key events
         if event::poll(Duration::from_millis(100))?
-            && let Event::Key(key) = event::read()? {
-                if app_state.show_help {
-                    match key.code {
-                        KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
-                            app_state.show_help = false;
-                        }
-                        _ => {}
+            && let Event::Key(key) = event::read()?
+        {
+            if app_state.show_help {
+                match key.code {
+                    KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
+                        app_state.show_help = false;
                     }
-                } else {
-                    match key.code {
-                        KeyCode::Char('?') => {
-                            app_state.show_help = true;
-                        }
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('g') | KeyCode::Char('G') => {
-                            app_state.show_logger = !app_state.show_logger;
-                        }
-                        KeyCode::Tab => {
-                            app_state.active_pane = match app_state.active_pane {
-                                ActivePane::Source => ActivePane::Assembly,
-                                ActivePane::Assembly => ActivePane::Source,
-                            };
-                        }
-                        KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
-                            app_state.active_pane = ActivePane::Source;
-                        }
-                        KeyCode::Char('l') | KeyCode::Right if key.modifiers.is_empty() => {
-                            app_state.active_pane = ActivePane::Assembly;
-                        }
-                        KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left
-                            if key.modifiers.contains(KeyModifiers::SHIFT) =>
-                        {
-                            app_state.left_pane_width =
-                                app_state.left_pane_width.saturating_sub(5).max(10);
-                        }
-                        KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right
-                            if key.modifiers.contains(KeyModifiers::SHIFT) =>
-                        {
-                            app_state.left_pane_width =
-                                app_state.left_pane_width.saturating_add(5).min(90);
-                        }
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            let _pane_height = terminal.size().unwrap_or_default().height;
-                            app_state.scroll_down(1, _pane_height);
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
-                        KeyCode::PageDown => {
-                            let _pane_height = terminal.size().unwrap_or_default().height;
-                            app_state.scroll_down(PAGE_AMOUNT, _pane_height);
-                        }
-                        KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
-                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            let _pane_height = terminal.size().unwrap_or_default().height;
-                            app_state.scroll_down(PAGE_AMOUNT, _pane_height);
-                        }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app_state.scroll_up(PAGE_AMOUNT);
-                        }
-                        _ => {}
+                    _ => {}
+                }
+            } else {
+                match key.code {
+                    KeyCode::Char('?') => {
+                        app_state.show_help = true;
                     }
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('g') | KeyCode::Char('G') => {
+                        app_state.show_logger = !app_state.show_logger;
+                    }
+                    KeyCode::Tab => {
+                        app_state.active_pane = match app_state.active_pane {
+                            ActivePane::Source => ActivePane::Assembly,
+                            ActivePane::Assembly => ActivePane::Source,
+                        };
+                    }
+                    KeyCode::Char('h') | KeyCode::Left if key.modifiers.is_empty() => {
+                        app_state.active_pane = ActivePane::Source;
+                    }
+                    KeyCode::Char('l') | KeyCode::Right if key.modifiers.is_empty() => {
+                        app_state.active_pane = ActivePane::Assembly;
+                    }
+                    KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left
+                        if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        app_state.left_pane_width =
+                            app_state.left_pane_width.saturating_sub(5).max(10);
+                    }
+                    KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right
+                        if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        app_state.left_pane_width =
+                            app_state.left_pane_width.saturating_add(5).min(90);
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let _pane_height = terminal.size().unwrap_or_default().height;
+                        app_state.scroll_down(1, _pane_height);
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => app_state.scroll_up(1),
+                    KeyCode::PageDown => {
+                        let _pane_height = terminal.size().unwrap_or_default().height;
+                        app_state.scroll_down(PAGE_AMOUNT, _pane_height);
+                    }
+                    KeyCode::PageUp => app_state.scroll_up(PAGE_AMOUNT),
+                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let _pane_height = terminal.size().unwrap_or_default().height;
+                        app_state.scroll_down(PAGE_AMOUNT, _pane_height);
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app_state.scroll_up(PAGE_AMOUNT);
+                    }
+                    _ => {}
                 }
             }
+        }
     }
 }
 

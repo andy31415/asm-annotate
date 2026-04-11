@@ -23,7 +23,7 @@ impl SourceReader {
     /// # Arguments
     ///
     /// * `remaps` - A slice of strings representing `OLD_PREFIX NEW_PREFIX` pairs.
-    ///              Example: `["/build/path", "/local/path", "/other/build", "/other/local"]`
+    ///   Example: `["/build/path", "/local/path", "/other/build", "/other/local"]`
     ///
     /// # Returns
     ///

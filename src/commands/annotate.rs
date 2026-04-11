@@ -164,9 +164,10 @@ fn extract_mangled_symbols(instructions: &[Instruction]) -> Vec<String> {
         // Add symbols from branch targets in comments (e.g., "  ; <_Z1fv>")
         if let Some(comment) = inst.mnemonic.split_once(" ; <")
             && let Some(mangled) = comment.1.strip_suffix('>')
-                && mangled.starts_with("_Z") {
-                    names_to_demangle.insert(mangled.to_string());
-                }
+            && mangled.starts_with("_Z")
+        {
+            names_to_demangle.insert(mangled.to_string());
+        }
         // Add symbols from instruction operands
         for cap in mangled_regex.captures_iter(&inst.mnemonic) {
             names_to_demangle.insert(cap[0].to_string());

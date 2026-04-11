@@ -35,7 +35,8 @@ impl<'a> LoadedElf<'a> {
             .map_err(|e| color_eyre::eyre::eyre!("Failed to parse ELF file: {:#?}", e))?;
         // This is unsafe because we are aliasing the lifetime of elf_obj to 'a,
         // but we know that buffer will live as long as LoadedElf.
-        let elf_obj = unsafe { std::mem::transmute(elf_obj) };
+        let elf_obj =
+            unsafe { std::mem::transmute::<goblin::elf::Elf<'_>, goblin::elf::Elf<'_>>(elf_obj) };
         Ok(LoadedElf { buffer, elf_obj })
     }
 }
