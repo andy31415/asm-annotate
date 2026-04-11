@@ -89,6 +89,14 @@ pub fn handle_annotate(args: &Cli) -> Result<()> {
         display_name, selected_function.addr
     );
 
+    // Initial data load
+    let initial_data = load_annotation_data(args, &selected_function.name)?;
+
+    if args.dump {
+        crate::commands::dump::dump_annotation(&initial_data)?;
+        return Ok(());
+    }
+
     // Channel for file watch events
     let (tx, rx) = mpsc::channel();
 
@@ -130,9 +138,6 @@ pub fn handle_annotate(args: &Cli) -> Result<()> {
             thread::sleep(Duration::from_secs(3600)); // Sleep for a long time
         }
     });
-
-    // Initial data load
-    let initial_data = load_annotation_data(args, &selected_function.name)?;
 
     // Render output
     run_tui(args, &selected_function.name, initial_data, rx)?;

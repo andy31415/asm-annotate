@@ -25,6 +25,10 @@ pub struct Cli {
     #[arg(long, default_value = "2:5")]
     pub context: String,
 
+    /// Dump annotation as plain text (no TUI). Suitable for LLM/automation use.
+    #[arg(long)]
+    pub dump: bool,
+
     /// Set the logging level.
     #[arg(short, long, global = true, default_value_t = LogLevel::Info, ignore_case = true)]
     pub log_level: LogLevel,
