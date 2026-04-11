@@ -1,6 +1,6 @@
 [package]
 name = "asm-annotate"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2024"
 description = "Source↔assembly annotation for ELF files, with an interactive TUI and plain-text dump mode"
 license = "Apache-2.0"
