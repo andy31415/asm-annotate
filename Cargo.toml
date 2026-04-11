@@ -10,23 +10,23 @@ keywords = ["assembly", "embedded", "dwarf", "disassembly", "elf"]
 categories = ["command-line-utilities", "development-tools::debugging"]
 
 [dependencies]
-clap = { version = "4.5.4", features = ["derive"] }
-log = "0.4.21"
-color-eyre = "0.6.3"
-goblin = "0.9.0"
-cpp_demangle = "0.4.3"
-regex = "1.10.4"
-colored = "2.1.0"
-indexmap = "2.2.6"
-gimli = { version = "0.28.1", features = ["read"] }
-unicode-width = "0.2.2"
-terminal_size = "0.3"
-capstone = "0.12.0"
-ratatui = "0.27.0"
-crossterm = "0.27.0"
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+color-eyre = "0.6"
+goblin = "0.10"
+cpp_demangle = "0.4"
+regex = "1"
+colored = "3"
+indexmap = "2"
+gimli = { version = "0.33", features = ["read"] }
+unicode-width = "0.2"
+terminal_size = "0.4"
+capstone = "0.14"
+ratatui = "0.30"
+crossterm = "0.29"
 skim = "0.10"
-tui-logger = "0.11.0"
-notify = "6.1.1"
+tui-logger = "0.18"
+notify = "7"
 
 [dev-dependencies]
 tempfile = "3"

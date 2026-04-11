@@ -46,6 +46,7 @@ fn map_color(c: ColoredColor) -> Color {
         ColoredColor::BrightCyan => Color::LightCyan,
         ColoredColor::BrightWhite => Color::Gray,
         ColoredColor::TrueColor { r, g, b } => Color::Rgb(r, g, b),
+        ColoredColor::AnsiColor(n) => Color::Indexed(n),
     }
 }
 
@@ -245,8 +246,11 @@ const LOGGER_HEIGHT: u16 = 10;
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app_state: AppState,
-    file_change_rx: Receiver<()>, // Add this parameter
-) -> Result<()> {
+    file_change_rx: Receiver<()>,
+) -> Result<()>
+where
+    <B as Backend>::Error: Send + Sync + 'static,
+{
     loop {
         // Handle potential file changes
         if file_change_rx.try_recv().is_ok() {
@@ -262,7 +266,7 @@ fn run_app<B: Backend>(
         }
 
         terminal.draw(|f| {
-            let size = f.size();
+            let size = f.area();
             let main_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(
