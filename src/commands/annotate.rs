@@ -162,13 +162,11 @@ fn extract_mangled_symbols(instructions: &[Instruction]) -> Vec<String> {
 
     for inst in instructions {
         // Add symbols from branch targets in comments (e.g., "  ; <_Z1fv>")
-        if let Some(comment) = inst.mnemonic.split_once(" ; <") {
-            if let Some(mangled) = comment.1.strip_suffix('>') {
-                if mangled.starts_with("_Z") {
+        if let Some(comment) = inst.mnemonic.split_once(" ; <")
+            && let Some(mangled) = comment.1.strip_suffix('>')
+                && mangled.starts_with("_Z") {
                     names_to_demangle.insert(mangled.to_string());
                 }
-            }
-        }
         // Add symbols from instruction operands
         for cap in mangled_regex.captures_iter(&inst.mnemonic) {
             names_to_demangle.insert(cap[0].to_string());
@@ -236,10 +234,11 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
         );
     }
 
-    let mut instructions = match crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr) {
-        Ok(inst) => inst,
-        Err(e) => return Err(eyre!("Failed to disassemble: {}", e)),
-    };
+    let mut instructions =
+        match crate::backends::disasm::disassemble_range(&args.elf, start_addr, end_addr) {
+            Ok(inst) => inst,
+            Err(e) => return Err(eyre!("Failed to disassemble: {}", e)),
+        };
 
     if instructions.is_empty() {
         warn!("No instructions found in range.");
@@ -250,7 +249,10 @@ pub fn load_annotation_data(args: &Cli, func_name: &str) -> Result<AnnotationDat
     if !args.no_demangle {
         let names_to_demangle = extract_mangled_symbols(&instructions);
         if !names_to_demangle.is_empty() {
-            info!("Demangling {} symbols from instructions...", names_to_demangle.len());
+            info!(
+                "Demangling {} symbols from instructions...",
+                names_to_demangle.len()
+            );
             let demangled_map = demangler_backend.demangle_batch(&names_to_demangle)?;
             crate::backends::disasm::apply_demangling(&mut instructions, &demangled_map);
         }

@@ -11,13 +11,12 @@ use crossterm::{
 };
 use log::{error, info};
 use ratatui::{
-    Terminal,
+    Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -79,11 +78,18 @@ fn parse_context(context_str: &str) -> Result<(usize, usize)> {
     if let Ok(n) = context_str.parse::<usize>() {
         Ok((n, n))
     } else if let Some((n_str, m_str)) = context_str.split_once(':') {
-        let n = n_str.parse::<usize>().map_err(|_| eyre!("Invalid context number: {}", n_str))?;
-        let m = m_str.parse::<usize>().map_err(|_| eyre!("Invalid context number: {}", m_str))?;
+        let n = n_str
+            .parse::<usize>()
+            .map_err(|_| eyre!("Invalid context number: {}", n_str))?;
+        let m = m_str
+            .parse::<usize>()
+            .map_err(|_| eyre!("Invalid context number: {}", m_str))?;
         Ok((n, m))
     } else {
-        Err(eyre!("Invalid context format: {}. Use N or N:M", context_str))
+        Err(eyre!(
+            "Invalid context format: {}. Use N or N:M",
+            context_str
+        ))
     }
 }
 
@@ -176,7 +182,11 @@ impl AppState {
             let mut i = 0;
             while i < sorted_asm_lines.len() {
                 let current_asm_line = sorted_asm_lines[i];
-                let context = if i == 0 { self.pre_post_context } else { self.inter_context };
+                let context = if i == 0 {
+                    self.pre_post_context
+                } else {
+                    self.inter_context
+                };
                 let start = std::cmp::max(1, current_asm_line.saturating_sub(context));
                 let mut end = current_asm_line + context;
                 let mut j = i + 1;
@@ -396,8 +406,8 @@ fn run_app<B: Backend>(
         })?;
 
         // Poll for key events
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()? {
                 if app_state.show_help {
                     match key.code {
                         KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
@@ -459,7 +469,6 @@ fn run_app<B: Backend>(
                     }
                 }
             }
-        }
     }
 }
 
@@ -481,12 +490,11 @@ fn ui_title(f: &mut Frame, app_state: &AppState, area: Rect) {
 
 // Renders the source code pane.
 fn ui_source_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
-    let border_style =
-        if app_state.active_pane == ActivePane::Source && !app_state.show_help {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+    let border_style = if app_state.active_pane == ActivePane::Source && !app_state.show_help {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
     let pane = Paragraph::new(app_state.source_lines.clone())
         .block(
             Block::default()
@@ -500,12 +508,11 @@ fn ui_source_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
 
 // Renders the assembly code pane.
 fn ui_asm_pane(f: &mut Frame, app_state: &AppState, area: Rect) {
-    let border_style =
-        if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+    let border_style = if app_state.active_pane == ActivePane::Assembly && !app_state.show_help {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
     let pane = Paragraph::new(app_state.asm_lines.clone())
         .block(
             Block::default()

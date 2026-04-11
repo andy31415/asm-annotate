@@ -127,7 +127,10 @@ mod tests {
     }
 
     fn make_src(file: &str, line: usize) -> SourceLocation {
-        SourceLocation { file: file.to_string(), line }
+        SourceLocation {
+            file: file.to_string(),
+            line,
+        }
     }
 
     #[test]
@@ -169,11 +172,26 @@ mod tests {
         let src1 = make_src("a.c", 10);
         let src2 = make_src("b.c", 20);
         let annotated = vec![
-            AnnotatedInstruction { instruction: make_inst(0x1000, "nop"), source: None },
-            AnnotatedInstruction { instruction: make_inst(0x1001, "mov"), source: Some(src1.clone()) },
-            AnnotatedInstruction { instruction: make_inst(0x1002, "add"), source: Some(src1.clone()) },
-            AnnotatedInstruction { instruction: make_inst(0x1003, "sub"), source: Some(src2.clone()) },
-            AnnotatedInstruction { instruction: make_inst(0x1004, "jmp"), source: None },
+            AnnotatedInstruction {
+                instruction: make_inst(0x1000, "nop"),
+                source: None,
+            },
+            AnnotatedInstruction {
+                instruction: make_inst(0x1001, "mov"),
+                source: Some(src1.clone()),
+            },
+            AnnotatedInstruction {
+                instruction: make_inst(0x1002, "add"),
+                source: Some(src1.clone()),
+            },
+            AnnotatedInstruction {
+                instruction: make_inst(0x1003, "sub"),
+                source: Some(src2.clone()),
+            },
+            AnnotatedInstruction {
+                instruction: make_inst(0x1004, "jmp"),
+                source: None,
+            },
         ];
 
         let display_items = DisplayItem::from_annotated(&annotated).unwrap();

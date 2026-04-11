@@ -2,8 +2,8 @@
 
 use crate::backends::elf::{ElfBackend, GoblinElfBackend};
 use color_eyre::eyre::Result;
-use std::{fs, path::Path};
 use std::collections::HashMap;
+use std::{fs, path::Path};
 
 use capstone::{Capstone, Insn, arch::BuildsCapstone};
 use goblin::elf::Elf as ElfFile;
@@ -132,12 +132,12 @@ fn find_containing_section<'a>(
     ))
 }
 
-fn extract_code_range<'a>(
-    section_data: &'a [u8],
+fn extract_code_range(
+    section_data: &[u8],
     section_addr: u64,
     start: u64,
     end: u64,
-) -> Result<&'a [u8]> {
+) -> Result<&[u8]> {
     if start < section_addr {
         return Err(color_eyre::eyre::eyre!(
             "Start address {:#x} is before section start {:#x}",
@@ -163,11 +163,7 @@ fn extract_code_range<'a>(
     Ok(&section_data[offset_in_section as usize..(offset_in_section + length) as usize])
 }
 
-fn annotate_instruction(
-    insn: &Insn,
-    elf_obj: &ElfFile,
-    elf_backend: &impl ElfBackend,
-) -> String {
+fn annotate_instruction(insn: &Insn, elf_obj: &ElfFile, elf_backend: &impl ElfBackend) -> String {
     let mnemonic = insn.mnemonic().unwrap_or("");
     let op_str = insn.op_str().unwrap_or("");
     let mut full_mnemonic = format!("{} {}", mnemonic, op_str).trim().to_string();
@@ -244,10 +240,7 @@ pub fn disassemble_range(elf_path: &Path, start: u64, end: u64) -> Result<Vec<In
 ///
 /// * `instructions` - A mutable slice of `Instruction` structs to modify.
 /// * `demangled_map` - A HashMap where keys are mangled names and values are demangled names.
-pub fn apply_demangling(
-    instructions: &mut [Instruction],
-    demangled_map: &HashMap<String, String>,
-) {
+pub fn apply_demangling(instructions: &mut [Instruction], demangled_map: &HashMap<String, String>) {
     for inst in instructions {
         let mut new_mnemonic = inst.mnemonic.clone();
         for (mangled, demangled) in demangled_map {
